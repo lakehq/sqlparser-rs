@@ -1,14 +1,19 @@
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// http://www.apache.org/licenses/LICENSE-2.0
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 
 #[cfg(not(feature = "std"))]
 use alloc::{boxed::Box, format, string::String, vec::Vec};
@@ -310,7 +315,7 @@ pub enum DataType {
     ///
     /// [hive]: https://docs.cloudera.com/cdw-runtime/cloud/impala-sql-reference/topics/impala-struct.html
     /// [bigquery]: https://cloud.google.com/bigquery/docs/reference/standard-sql/data-types#struct_type
-    Struct(Vec<StructField>),
+    Struct(Vec<StructField>, StructBracketKind),
     /// Union
     ///
     /// [duckdb]: https://duckdb.org/docs/sql/data_types/union.html
@@ -327,6 +332,10 @@ pub enum DataType {
     /// [`SQLiteDialect`](crate::dialect::SQLiteDialect), from statements such
     /// as `CREATE TABLE t1 (a)`.
     Unspecified,
+    /// Trigger data type, returned by functions associated with triggers
+    ///
+    /// [postgresql]: https://www.postgresql.org/docs/current/plpgsql-trigger.html
+    Trigger,
 }
 
 impl fmt::Display for DataType {
@@ -529,9 +538,16 @@ impl fmt::Display for DataType {
                 }
                 write!(f, ")")
             }
-            DataType::Struct(fields) => {
+            DataType::Struct(fields, bracket) => {
                 if !fields.is_empty() {
-                    write!(f, "STRUCT<{}>", display_comma_separated(fields))
+                    match bracket {
+                        StructBracketKind::Parentheses => {
+                            write!(f, "STRUCT({})", display_comma_separated(fields))
+                        }
+                        StructBracketKind::AngleBrackets => {
+                            write!(f, "STRUCT<{}>", display_comma_separated(fields))
+                        }
+                    }
                 } else {
                     write!(f, "STRUCT")
                 }
@@ -559,6 +575,7 @@ impl fmt::Display for DataType {
                 write!(f, "Nested({})", display_comma_separated(fields))
             }
             DataType::Unspecified => Ok(()),
+            DataType::Trigger => write!(f, "TRIGGER"),
         }
     }
 }
@@ -627,6 +644,17 @@ fn format_clickhouse_datetime_precision_and_timezone(
     write!(f, ")")?;
 
     Ok(())
+}
+
+/// Type of brackets used for `STRUCT` literals.
+#[derive(Debug, Clone, PartialEq, PartialOrd, Eq, Ord, Hash)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "visitor", derive(Visit, VisitMut))]
+pub enum StructBracketKind {
+    /// Example: `STRUCT(a INT, b STRING)`
+    Parentheses,
+    /// Example: `STRUCT<a INT, b STRING>`
+    AngleBrackets,
 }
 
 /// Timestamp and Time data types information about TimeZone formatting.

@@ -15,26 +15,28 @@
 # specific language governing permissions and limitations
 # under the License.
 
-[package]
-name = "sqlparser_derive"
-description = "proc macro for sqlparser"
-version = "0.2.2"
-authors = ["sqlparser-rs authors"]
-homepage = "https://github.com/sqlparser-rs/sqlparser-rs"
-documentation = "https://docs.rs/sqlparser_derive/"
-keywords = ["ansi", "sql", "lexer", "parser"]
-repository = "https://github.com/sqlparser-rs/sqlparser-rs"
-license = "Apache-2.0"
-include = [
-    "src/**/*.rs",
-    "Cargo.toml",
-]
-edition = "2021"
+name: Prepare Rust Builder
+description: 'Prepare Rust Build Environment'
+inputs:
+  rust-version:
+    description: 'version of rust to install (e.g. stable)'
+    required: true
+    default: 'stable'
+  targets:
+    description: 'The toolchain targets to add, comma-separated'
+    default: ''
 
-[lib]
-proc-macro = true
-
-[dependencies]
-syn = { version = "2.0", default-features = false, features = ["printing", "parsing", "derive", "proc-macro"] }
-proc-macro2 = "1.0"
-quote = "1.0"
+runs:
+  using: "composite"
+  steps:
+    - name: Setup Rust Toolchain
+      shell: bash
+      run: |
+        echo "Installing ${{ inputs.rust-version }}"
+        if [ -n "${{ inputs.targets}}" ]; then
+          rustup toolchain install ${{ inputs.rust-version }} -t ${{ inputs.targets }}
+        else
+          rustup toolchain install ${{ inputs.rust-version }}
+        fi
+        rustup default ${{ inputs.rust-version }}
+        rustup component add rustfmt clippy

@@ -1,3 +1,20 @@
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
+//
+//   http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
+
 use sqlparser::ast::*;
 use sqlparser::dialect::{DatabricksDialect, GenericDialect};
 use sqlparser::parser::ParserError;
@@ -64,7 +81,7 @@ fn test_databricks_exists() {
     let res = databricks().parse_sql_statements("SELECT EXISTS (");
     assert_eq!(
         // TODO: improve this error message...
-        ParserError::ParserError("Expected: an expression:, found: EOF".to_string()),
+        ParserError::ParserError("Expected: an expression, found: EOF".to_string()),
         res.unwrap_err(),
     );
 }
@@ -177,7 +194,8 @@ fn test_values_clause() {
             args: None,
             with_hints: vec![],
             version: None,
-            partitions: vec![]
+            partitions: vec![],
+            with_ordinality: false,
         }),
         query
             .body
@@ -187,4 +205,78 @@ fn test_values_clause() {
 
     // TODO: support this example from https://docs.databricks.com/en/sql/language-manual/sql-ref-syntax-qry-select-values.html#examples
     // databricks().verified_query("VALUES 1, 2, 3");
+}
+
+#[test]
+fn parse_use() {
+    let valid_object_names = ["mydb", "WAREHOUSE", "DEFAULT"];
+    let quote_styles = ['"', '`'];
+
+    for object_name in &valid_object_names {
+        // Test single identifier without quotes
+        assert_eq!(
+            databricks().verified_stmt(&format!("USE {}", object_name)),
+            Statement::Use(Use::Object(ObjectName(vec![Ident::new(
+                object_name.to_string()
+            )])))
+        );
+        for &quote in &quote_styles {
+            // Test single identifier with different type of quotes
+            assert_eq!(
+                databricks().verified_stmt(&format!("USE {0}{1}{0}", quote, object_name)),
+                Statement::Use(Use::Object(ObjectName(vec![Ident::with_quote(
+                    quote,
+                    object_name.to_string(),
+                )])))
+            );
+        }
+    }
+
+    for &quote in &quote_styles {
+        // Test single identifier with keyword and different type of quotes
+        assert_eq!(
+            databricks().verified_stmt(&format!("USE CATALOG {0}my_catalog{0}", quote)),
+            Statement::Use(Use::Catalog(ObjectName(vec![Ident::with_quote(
+                quote,
+                "my_catalog".to_string(),
+            )])))
+        );
+        assert_eq!(
+            databricks().verified_stmt(&format!("USE DATABASE {0}my_database{0}", quote)),
+            Statement::Use(Use::Database(ObjectName(vec![Ident::with_quote(
+                quote,
+                "my_database".to_string(),
+            )])))
+        );
+        assert_eq!(
+            databricks().verified_stmt(&format!("USE SCHEMA {0}my_schema{0}", quote)),
+            Statement::Use(Use::Schema(ObjectName(vec![Ident::with_quote(
+                quote,
+                "my_schema".to_string(),
+            )])))
+        );
+    }
+
+    // Test single identifier with keyword and no quotes
+    assert_eq!(
+        databricks().verified_stmt("USE CATALOG my_catalog"),
+        Statement::Use(Use::Catalog(ObjectName(vec![Ident::new("my_catalog")])))
+    );
+    assert_eq!(
+        databricks().verified_stmt("USE DATABASE my_schema"),
+        Statement::Use(Use::Database(ObjectName(vec![Ident::new("my_schema")])))
+    );
+    assert_eq!(
+        databricks().verified_stmt("USE SCHEMA my_schema"),
+        Statement::Use(Use::Schema(ObjectName(vec![Ident::new("my_schema")])))
+    );
+
+    // Test invalid syntax - missing identifier
+    let invalid_cases = ["USE SCHEMA", "USE DATABASE", "USE CATALOG"];
+    for sql in &invalid_cases {
+        assert_eq!(
+            databricks().parse_sql_statements(sql).unwrap_err(),
+            ParserError::ParserError("Expected: identifier, found: EOF".to_string()),
+        );
+    }
 }

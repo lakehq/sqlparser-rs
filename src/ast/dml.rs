@@ -1,14 +1,19 @@
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// http://www.apache.org/licenses/LICENSE-2.0
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 
 #[cfg(not(feature = "std"))]
 use alloc::{boxed::Box, string::String, vec::Vec};
@@ -22,11 +27,11 @@ use sqlparser_derive::{Visit, VisitMut};
 pub use super::ddl::{ColumnDef, TableConstraint};
 
 use super::{
-    display_comma_separated, display_separated, CommentDef, Expr, FileFormat, FromTable,
-    HiveDistributionStyle, HiveFormat, HiveIOFormat, HiveRowFormat, Ident, InsertAliases,
-    MysqlInsertPriority, ObjectName, OnCommit, OnInsert, OneOrManyWithParens, OrderByExpr, Query,
-    RowAccessPolicy, SelectItem, SqlOption, SqliteOnConflict, TableEngine, TableWithJoins, Tag,
-    WrappedCollection,
+    display_comma_separated, display_separated, ClusteredBy, CommentDef, Expr, FileFormat,
+    FromTable, HiveDistributionStyle, HiveFormat, HiveIOFormat, HiveRowFormat, Ident,
+    InsertAliases, MysqlInsertPriority, ObjectName, OnCommit, OnInsert, OneOrManyWithParens,
+    OrderByExpr, Query, RowAccessPolicy, SelectItem, SqlOption, SqliteOnConflict, TableEngine,
+    TableWithJoins, Tag, WrappedCollection,
 };
 
 /// CREATE INDEX statement.
@@ -45,6 +50,8 @@ pub struct CreateIndex {
     pub if_not_exists: bool,
     pub include: Vec<Ident>,
     pub nulls_distinct: Option<bool>,
+    /// WITH clause: <https://www.postgresql.org/docs/current/sql-createindex.html>
+    pub with: Vec<Expr>,
     pub predicate: Option<Expr>,
 }
 
@@ -82,6 +89,9 @@ impl Display for CreateIndex {
             } else {
                 write!(f, " NULLS NOT DISTINCT")?;
             }
+        }
+        if !self.with.is_empty() {
+            write!(f, " WITH ({})", display_comma_separated(&self.with))?;
         }
         if let Some(predicate) = &self.predicate {
             write!(f, " WHERE {predicate}")?;
@@ -126,7 +136,7 @@ pub struct CreateTable {
     pub on_commit: Option<OnCommit>,
     /// ClickHouse "ON CLUSTER" clause:
     /// <https://clickhouse.com/docs/en/sql-reference/distributed-ddl/>
-    pub on_cluster: Option<String>,
+    pub on_cluster: Option<Ident>,
     /// ClickHouse "PRIMARY KEY " clause.
     /// <https://clickhouse.com/docs/en/sql-reference/statements/create/table/>
     pub primary_key: Option<Box<Expr>>,
@@ -140,6 +150,9 @@ pub struct CreateTable {
     /// BigQuery: Table clustering column list.
     /// <https://cloud.google.com/bigquery/docs/reference/standard-sql/data-definition-language#table_option_list>
     pub cluster_by: Option<WrappedCollection<Vec<Ident>>>,
+    /// Hive: Table clustering column list.
+    /// <https://cwiki.apache.org/confluence/display/Hive/LanguageManual+DDL#LanguageManualDDL-CreateTable>
+    pub clustered_by: Option<ClusteredBy>,
     /// BigQuery: Table options list.
     /// <https://cloud.google.com/bigquery/docs/reference/standard-sql/data-definition-language#table_option_list>
     pub options: Option<Vec<SqlOption>>,
@@ -206,11 +219,7 @@ impl Display for CreateTable {
             name = self.name,
         )?;
         if let Some(on_cluster) = &self.on_cluster {
-            write!(
-                f,
-                " ON CLUSTER {}",
-                on_cluster.replace('{', "'{").replace('}', "}'")
-            )?;
+            write!(f, " ON CLUSTER {}", on_cluster)?;
         }
         if !self.columns.is_empty() || !self.constraints.is_empty() {
             write!(f, " ({}", display_comma_separated(&self.columns))?;
@@ -222,6 +231,13 @@ impl Display for CreateTable {
             // PostgreSQL allows `CREATE TABLE t ();`, but requires empty parens
             write!(f, " ()")?;
         }
+
+        // Hive table comment should be after column definitions, please refer to:
+        // [Hive](https://cwiki.apache.org/confluence/display/Hive/LanguageManual+DDL#LanguageManualDDL-CreateTable)
+        if let Some(CommentDef::AfterColumnDefsWithoutEq(comment)) = &self.comment {
+            write!(f, " COMMENT '{comment}'")?;
+        }
+
         // Only for SQLite
         if self.without_rowid {
             write!(f, " WITHOUT ROWID")?;
@@ -240,19 +256,6 @@ impl Display for CreateTable {
             HiveDistributionStyle::PARTITIONED { columns } => {
                 write!(f, " PARTITIONED BY ({})", display_comma_separated(columns))?;
             }
-            HiveDistributionStyle::CLUSTERED {
-                columns,
-                sorted_by,
-                num_buckets,
-            } => {
-                write!(f, " CLUSTERED BY ({})", display_comma_separated(columns))?;
-                if !sorted_by.is_empty() {
-                    write!(f, " SORTED BY ({})", display_comma_separated(sorted_by))?;
-                }
-                if *num_buckets > 0 {
-                    write!(f, " INTO {num_buckets} BUCKETS")?;
-                }
-            }
             HiveDistributionStyle::SKEWED {
                 columns,
                 on,
@@ -269,6 +272,10 @@ impl Display for CreateTable {
                 }
             }
             _ => (),
+        }
+
+        if let Some(clustered_by) = &self.clustered_by {
+            write!(f, " {clustered_by}")?;
         }
 
         if let Some(HiveFormat {
@@ -341,6 +348,8 @@ impl Display for CreateTable {
                 CommentDef::WithoutEq(comment) => {
                     write!(f, " COMMENT '{comment}'")?;
                 }
+                // For CommentDef::AfterColumnDefsWithoutEq will be displayed after column definition
+                CommentDef::AfterColumnDefsWithoutEq(_) => (),
             }
         }
 
@@ -418,9 +427,6 @@ impl Display for CreateTable {
             write!(f, " WITH TAG ({})", display_comma_separated(tag.as_slice()))?;
         }
 
-        if let Some(query) = &self.query {
-            write!(f, " AS {query}")?;
-        }
         if let Some(default_charset) = &self.default_charset {
             write!(f, " DEFAULT CHARSET={default_charset}")?;
         }
@@ -439,6 +445,9 @@ impl Display for CreateTable {
         }
         if self.strict {
             write!(f, " STRICT")?;
+        }
+        if let Some(query) = &self.query {
+            write!(f, " AS {query}")?;
         }
         Ok(())
     }

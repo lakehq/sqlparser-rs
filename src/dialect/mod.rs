@@ -1,14 +1,19 @@
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// http://www.apache.org/licenses/LICENSE-2.0
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 
 mod ansi;
 mod bigquery;
@@ -24,11 +29,12 @@ mod redshift;
 mod snowflake;
 mod sqlite;
 
-use crate::ast::{Expr, Statement};
 use core::any::{Any, TypeId};
 use core::fmt::Debug;
 use core::iter::Peekable;
 use core::str::Chars;
+
+use log::debug;
 
 pub use self::ansi::AnsiDialect;
 pub use self::bigquery::BigQueryDialect;
@@ -43,8 +49,11 @@ pub use self::postgresql::PostgreSqlDialect;
 pub use self::redshift::RedshiftSqlDialect;
 pub use self::snowflake::SnowflakeDialect;
 pub use self::sqlite::SQLiteDialect;
+use crate::ast::{Expr, Statement};
 pub use crate::keywords;
+use crate::keywords::Keyword;
 use crate::parser::{Parser, ParserError};
+use crate::tokenizer::Token;
 
 #[cfg(not(feature = "std"))]
 use alloc::boxed::Box;
@@ -62,7 +71,8 @@ macro_rules! dialect_of {
 /// Encapsulates the differences between SQL implementations.
 ///
 /// # SQL Dialects
-/// SQL implementations deviatiate from one another, either due to
+///
+/// SQL implementations deviate from one another, either due to
 /// custom extensions or various historical reasons. This trait
 /// encapsulates the parsing differences between dialects.
 ///
@@ -110,16 +120,20 @@ pub trait Dialect: Debug + Any {
     fn is_delimited_identifier_start(&self, ch: char) -> bool {
         ch == '"' || ch == '`'
     }
+
     /// Return the character used to quote identifiers.
     fn identifier_quote_style(&self, _identifier: &str) -> Option<char> {
         None
     }
+
     /// Determine if quoted characters are proper for identifier
     fn is_proper_identifier_inside_quotes(&self, mut _chars: Peekable<Chars<'_>>) -> bool {
         true
     }
+
     /// Determine if a character is a valid start character for an unquoted identifier
     fn is_identifier_start(&self, ch: char) -> bool;
+
     /// Determine if a character is a valid unquoted identifier character
     fn is_identifier_part(&self, ch: char) -> bool;
 
@@ -145,10 +159,26 @@ pub trait Dialect: Debug + Any {
     fn supports_string_literal_backslash_escape(&self) -> bool {
         false
     }
+
+    /// Determine if the dialect supports string literals with `U&` prefix.
+    /// This is used to specify Unicode code points in string literals.
+    /// For example, in PostgreSQL, the following is a valid string literal:
+    /// ```sql
+    /// SELECT U&'\0061\0062\0063';
+    /// ```
+    /// This is equivalent to the string literal `'abc'`.
+    /// See
+    ///  - [Postgres docs](https://www.postgresql.org/docs/current/sql-syntax-lexical.html#SQL-SYNTAX-STRINGS-UESCAPE)
+    ///  - [H2 docs](http://www.h2database.com/html/grammar.html#string)
+    fn supports_unicode_string_literal(&self) -> bool {
+        false
+    }
+
     /// Does the dialect support `FILTER (WHERE expr)` for aggregate queries?
     fn supports_filter_during_aggregation(&self) -> bool {
         false
     }
+
     /// Returns true if the dialect supports referencing another named window
     /// within a window clause declaration.
     ///
@@ -160,6 +190,7 @@ pub trait Dialect: Debug + Any {
     fn supports_window_clause_named_window_reference(&self) -> bool {
         false
     }
+
     /// Returns true if the dialect supports `ARRAY_AGG() [WITHIN GROUP (ORDER BY)]` expressions.
     /// Otherwise, the dialect should expect an `ORDER BY` without the `WITHIN GROUP` clause, e.g. [`ANSI`]
     ///
@@ -167,38 +198,47 @@ pub trait Dialect: Debug + Any {
     fn supports_within_after_array_aggregation(&self) -> bool {
         false
     }
+
     /// Returns true if the dialects supports `group sets, roll up, or cube` expressions.
     fn supports_group_by_expr(&self) -> bool {
         false
     }
+
     /// Returns true if the dialect supports CONNECT BY.
     fn supports_connect_by(&self) -> bool {
         false
     }
+
     /// Returns true if the dialect supports the MATCH_RECOGNIZE operation.
     fn supports_match_recognize(&self) -> bool {
         false
     }
+
     /// Returns true if the dialect supports `(NOT) IN ()` expressions
     fn supports_in_empty_list(&self) -> bool {
         false
     }
+
     /// Returns true if the dialect supports `BEGIN {DEFERRED | IMMEDIATE | EXCLUSIVE} [TRANSACTION]` statements
     fn supports_start_transaction_modifier(&self) -> bool {
         false
     }
+
     /// Returns true if the dialect supports named arguments of the form FUN(a = '1', b = '2').
     fn supports_named_fn_args_with_eq_operator(&self) -> bool {
         false
     }
+
     /// Returns true if the dialect supports identifiers starting with a numeric
-    /// prefix such as tables named: `59901_user_login`
+    /// prefix such as tables named `59901_user_login`
     fn supports_numeric_prefix(&self) -> bool {
         false
     }
+
     /// Returns true if the dialects supports specifying null treatment
-    /// as part of a window function's parameter list. As opposed
+    /// as part of a window function's parameter list as opposed
     /// to after the parameter list.
+    ///
     /// i.e The following syntax returns true
     /// ```sql
     /// FIRST_VALUE(a IGNORE NULLS) OVER ()
@@ -210,11 +250,19 @@ pub trait Dialect: Debug + Any {
     fn supports_window_function_null_treatment_arg(&self) -> bool {
         false
     }
+
     /// Returns true if the dialect supports defining structs or objects using a
     /// syntax like `{'x': 1, 'y': 2, 'z': 3}`.
     fn supports_dictionary_syntax(&self) -> bool {
         false
     }
+
+    /// Returns true if the dialect supports defining object using the
+    /// syntax like `Map {1: 10, 2: 20}`.
+    fn support_map_literal_syntax(&self) -> bool {
+        false
+    }
+
     /// Returns true if the dialect supports lambda functions, for example:
     ///
     /// ```sql
@@ -223,6 +271,7 @@ pub trait Dialect: Debug + Any {
     fn supports_lambda_functions(&self) -> bool {
         false
     }
+
     /// Returns true if the dialect supports multiple variable assignment
     /// using parentheses in a `SET` variable declaration.
     ///
@@ -232,6 +281,7 @@ pub trait Dialect: Debug + Any {
     fn supports_parenthesized_set_variables(&self) -> bool {
         false
     }
+
     /// Returns true if the dialect supports an `EXCEPT` clause following a
     /// wildcard in a select list.
     ///
@@ -242,30 +292,40 @@ pub trait Dialect: Debug + Any {
     fn supports_select_wildcard_except(&self) -> bool {
         false
     }
+
     /// Returns true if the dialect has a CONVERT function which accepts a type first
     /// and an expression second, e.g. `CONVERT(varchar, 1)`
     fn convert_type_before_value(&self) -> bool {
         false
     }
+
     /// Returns true if the dialect supports triple quoted string
     /// e.g. `"""abc"""`
     fn supports_triple_quoted_string(&self) -> bool {
         false
     }
+
     /// Dialect-specific prefix parser override
     fn parse_prefix(&self, _parser: &mut Parser) -> Option<Result<Expr, ParserError>> {
         // return None to fall back to the default behavior
         None
     }
+
     /// Does the dialect support trailing commas around the query?
     fn supports_trailing_commas(&self) -> bool {
         false
     }
+
     /// Does the dialect support trailing commas in the projection list?
     fn supports_projection_trailing_commas(&self) -> bool {
         self.supports_trailing_commas()
     }
+
     /// Dialect-specific infix parser override
+    ///
+    /// This method is called to parse the next infix expression.
+    ///
+    /// If `None` is returned, falls back to the default behavior.
     fn parse_infix(
         &self,
         _parser: &mut Parser,
@@ -275,16 +335,239 @@ pub trait Dialect: Debug + Any {
         // return None to fall back to the default behavior
         None
     }
+
     /// Dialect-specific precedence override
+    ///
+    /// This method is called to get the precedence of the next token.
+    ///
+    /// If `None` is returned, falls back to the default behavior.
     fn get_next_precedence(&self, _parser: &Parser) -> Option<Result<u8, ParserError>> {
         // return None to fall back to the default behavior
         None
     }
+
+    /// Get the precedence of the next token, looking at the full token stream.
+    ///
+    /// A higher number => higher precedence
+    ///
+    /// See [`Self::get_next_precedence`] to override the behavior for just the
+    /// next token.
+    ///
+    /// The default implementation is used for many dialects, but can be
+    /// overridden to provide dialect-specific behavior.
+    fn get_next_precedence_default(&self, parser: &Parser) -> Result<u8, ParserError> {
+        if let Some(precedence) = self.get_next_precedence(parser) {
+            return precedence;
+        }
+        macro_rules! p {
+            ($precedence:ident) => {
+                self.prec_value(Precedence::$precedence)
+            };
+        }
+
+        let token = parser.peek_token();
+        debug!("get_next_precedence_full() {:?}", token);
+        match token.token {
+            Token::Word(w) if w.keyword == Keyword::OR => Ok(p!(Or)),
+            Token::Word(w) if w.keyword == Keyword::AND => Ok(p!(And)),
+            Token::Word(w) if w.keyword == Keyword::XOR => Ok(p!(Xor)),
+
+            Token::Word(w) if w.keyword == Keyword::AT => {
+                match (
+                    parser.peek_nth_token(1).token,
+                    parser.peek_nth_token(2).token,
+                ) {
+                    (Token::Word(w), Token::Word(w2))
+                        if w.keyword == Keyword::TIME && w2.keyword == Keyword::ZONE =>
+                    {
+                        Ok(p!(AtTz))
+                    }
+                    _ => Ok(self.prec_unknown()),
+                }
+            }
+
+            Token::Word(w) if w.keyword == Keyword::NOT => match parser.peek_nth_token(1).token {
+                // The precedence of NOT varies depending on keyword that
+                // follows it. If it is followed by IN, BETWEEN, or LIKE,
+                // it takes on the precedence of those tokens. Otherwise, it
+                // is not an infix operator, and therefore has zero
+                // precedence.
+                Token::Word(w) if w.keyword == Keyword::IN => Ok(p!(Between)),
+                Token::Word(w) if w.keyword == Keyword::BETWEEN => Ok(p!(Between)),
+                Token::Word(w) if w.keyword == Keyword::LIKE => Ok(p!(Like)),
+                Token::Word(w) if w.keyword == Keyword::ILIKE => Ok(p!(Like)),
+                Token::Word(w) if w.keyword == Keyword::RLIKE => Ok(p!(Like)),
+                Token::Word(w) if w.keyword == Keyword::REGEXP => Ok(p!(Like)),
+                Token::Word(w) if w.keyword == Keyword::SIMILAR => Ok(p!(Like)),
+                _ => Ok(self.prec_unknown()),
+            },
+            Token::Word(w) if w.keyword == Keyword::IS => Ok(p!(Is)),
+            Token::Word(w) if w.keyword == Keyword::IN => Ok(p!(Between)),
+            Token::Word(w) if w.keyword == Keyword::BETWEEN => Ok(p!(Between)),
+            Token::Word(w) if w.keyword == Keyword::LIKE => Ok(p!(Like)),
+            Token::Word(w) if w.keyword == Keyword::ILIKE => Ok(p!(Like)),
+            Token::Word(w) if w.keyword == Keyword::RLIKE => Ok(p!(Like)),
+            Token::Word(w) if w.keyword == Keyword::REGEXP => Ok(p!(Like)),
+            Token::Word(w) if w.keyword == Keyword::SIMILAR => Ok(p!(Like)),
+            Token::Word(w) if w.keyword == Keyword::OPERATOR => Ok(p!(Between)),
+            Token::Word(w) if w.keyword == Keyword::DIV => Ok(p!(MulDivModOp)),
+            Token::Eq
+            | Token::Lt
+            | Token::LtEq
+            | Token::Neq
+            | Token::Gt
+            | Token::GtEq
+            | Token::DoubleEq
+            | Token::Tilde
+            | Token::TildeAsterisk
+            | Token::ExclamationMarkTilde
+            | Token::ExclamationMarkTildeAsterisk
+            | Token::DoubleTilde
+            | Token::DoubleTildeAsterisk
+            | Token::ExclamationMarkDoubleTilde
+            | Token::ExclamationMarkDoubleTildeAsterisk
+            | Token::Spaceship => Ok(p!(Eq)),
+            Token::Pipe => Ok(p!(Pipe)),
+            Token::Caret | Token::Sharp | Token::ShiftRight | Token::ShiftLeft => Ok(p!(Caret)),
+            Token::Ampersand => Ok(p!(Ampersand)),
+            Token::Plus | Token::Minus => Ok(p!(PlusMinus)),
+            Token::Mul | Token::Div | Token::DuckIntDiv | Token::Mod | Token::StringConcat => {
+                Ok(p!(MulDivModOp))
+            }
+            Token::DoubleColon
+            | Token::ExclamationMark
+            | Token::LBracket
+            | Token::Overlap
+            | Token::CaretAt => Ok(p!(DoubleColon)),
+            Token::Arrow
+            | Token::LongArrow
+            | Token::HashArrow
+            | Token::HashLongArrow
+            | Token::AtArrow
+            | Token::ArrowAt
+            | Token::HashMinus
+            | Token::AtQuestion
+            | Token::AtAt
+            | Token::Question
+            | Token::QuestionAnd
+            | Token::QuestionPipe
+            | Token::CustomBinaryOperator(_) => Ok(p!(PgOther)),
+            _ => Ok(self.prec_unknown()),
+        }
+    }
+
     /// Dialect-specific statement parser override
+    ///
+    /// This method is called to parse the next statement.
+    ///
+    /// If `None` is returned, falls back to the default behavior.
     fn parse_statement(&self, _parser: &mut Parser) -> Option<Result<Statement, ParserError>> {
         // return None to fall back to the default behavior
         None
     }
+
+    /// Decide the lexical Precedence of operators.
+    ///
+    /// Uses (APPROXIMATELY) <https://www.postgresql.org/docs/7.0/operators.htm#AEN2026> as a reference
+    fn prec_value(&self, prec: Precedence) -> u8 {
+        match prec {
+            Precedence::DoubleColon => 50,
+            Precedence::AtTz => 41,
+            Precedence::MulDivModOp => 40,
+            Precedence::PlusMinus => 30,
+            Precedence::Xor => 24,
+            Precedence::Ampersand => 23,
+            Precedence::Caret => 22,
+            Precedence::Pipe => 21,
+            Precedence::Between => 20,
+            Precedence::Eq => 20,
+            Precedence::Like => 19,
+            Precedence::Is => 17,
+            Precedence::PgOther => 16,
+            Precedence::UnaryNot => 15,
+            Precedence::And => 10,
+            Precedence::Or => 5,
+        }
+    }
+
+    /// Returns the precedence when the precedence is otherwise unknown
+    fn prec_unknown(&self) -> u8 {
+        0
+    }
+
+    /// Returns true if this dialect requires the `TABLE` keyword after `DESCRIBE`
+    ///
+    /// Defaults to false.
+    ///
+    /// If true, the following statement is valid: `DESCRIBE TABLE my_table`
+    /// If false, the following statements are valid: `DESCRIBE my_table` and `DESCRIBE table`
+    fn describe_requires_table_keyword(&self) -> bool {
+        false
+    }
+
+    /// Returns true if this dialect allows the `EXTRACT` function to words other than [`Keyword`].
+    fn allow_extract_custom(&self) -> bool {
+        false
+    }
+
+    /// Returns true if this dialect allows the `EXTRACT` function to use single quotes in the part being extracted.
+    fn allow_extract_single_quotes(&self) -> bool {
+        false
+    }
+
+    /// Does the dialect support with clause in create index statement?
+    /// e.g. `CREATE INDEX idx ON t WITH (key = value, key2)`
+    fn supports_create_index_with_clause(&self) -> bool {
+        false
+    }
+
+    /// Whether `INTERVAL` expressions require units (called "qualifiers" in the ANSI SQL spec) to be specified,
+    /// e.g. `INTERVAL 1 DAY` vs `INTERVAL 1`.
+    ///
+    /// Expressions within intervals (e.g. `INTERVAL '1' + '1' DAY`) are only allowed when units are required.
+    ///
+    /// See <https://github.com/sqlparser-rs/sqlparser-rs/pull/1398> for more information.
+    ///
+    /// When `true`:
+    /// * `INTERVAL '1' DAY` is VALID
+    /// * `INTERVAL 1 + 1 DAY` is VALID
+    /// * `INTERVAL '1' + '1' DAY` is VALID
+    /// * `INTERVAL '1'` is INVALID
+    ///
+    /// When `false`:
+    /// * `INTERVAL '1'` is VALID
+    /// * `INTERVAL '1' DAY` is VALID — unit is not required, but still allowed
+    /// * `INTERVAL 1 + 1 DAY` is INVALID
+    fn require_interval_qualifier(&self) -> bool {
+        false
+    }
+
+    fn supports_explain_with_utility_options(&self) -> bool {
+        false
+    }
+}
+
+/// This represents the operators for which precedence must be defined
+///
+/// higher number -> higher precedence
+#[derive(Debug, Clone, Copy)]
+pub enum Precedence {
+    DoubleColon,
+    AtTz,
+    MulDivModOp,
+    PlusMinus,
+    Xor,
+    Ampersand,
+    Caret,
+    Pipe,
+    Between,
+    Eq,
+    Like,
+    Is,
+    PgOther,
+    UnaryNot,
+    And,
+    Or,
 }
 
 impl dyn Dialect {
@@ -313,6 +596,7 @@ pub fn dialect_from_str(dialect_name: impl AsRef<str>) -> Option<Box<dyn Dialect
         "bigquery" => Some(Box::new(BigQueryDialect)),
         "ansi" => Some(Box::new(AnsiDialect {})),
         "duckdb" => Some(Box::new(DuckDbDialect {})),
+        "databricks" => Some(Box::new(DatabricksDialect {})),
         _ => None,
     }
 }
@@ -364,6 +648,8 @@ mod tests {
         assert!(parse_dialect("ANSI").is::<AnsiDialect>());
         assert!(parse_dialect("duckdb").is::<DuckDbDialect>());
         assert!(parse_dialect("DuckDb").is::<DuckDbDialect>());
+        assert!(parse_dialect("DataBricks").is::<DatabricksDialect>());
+        assert!(parse_dialect("databricks").is::<DatabricksDialect>());
 
         // error cases
         assert!(dialect_from_str("Unknown").is_none());

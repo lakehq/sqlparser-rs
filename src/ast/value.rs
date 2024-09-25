@@ -1,14 +1,19 @@
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// http://www.apache.org/licenses/LICENSE-2.0
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 
 #[cfg(not(feature = "std"))]
 use alloc::string::String;
@@ -52,6 +57,10 @@ pub enum Value {
     /// See [Postgres docs](https://www.postgresql.org/docs/8.3/sql-syntax-lexical.html#SQL-SYNTAX-STRINGS)
     /// for more details.
     EscapedStringLiteral(String),
+    /// u&'string value' (postgres extension)
+    /// See [Postgres docs](https://www.postgresql.org/docs/current/sql-syntax-lexical.html#SQL-SYNTAX-STRINGS-UESCAPE)
+    /// for more details.
+    UnicodeStringLiteral(String),
     /// B'string value'
     SingleQuotedByteStringLiteral(String),
     /// B"string value"
@@ -102,6 +111,7 @@ impl fmt::Display for Value {
             }
             Value::DollarQuotedString(v) => write!(f, "{v}"),
             Value::EscapedStringLiteral(v) => write!(f, "E'{}'", escape_escaped_string(v)),
+            Value::UnicodeStringLiteral(v) => write!(f, "U&'{}'", escape_unicode_string(v)),
             Value::NationalStringLiteral(v) => write!(f, "N'{v}'"),
             Value::HexStringLiteral(v) => write!(f, "X'{v}'"),
             Value::Boolean(v) => write!(f, "{v}"),
@@ -359,6 +369,41 @@ impl<'a> fmt::Display for EscapeEscapedStringLiteral<'a> {
 
 pub fn escape_escaped_string(s: &str) -> EscapeEscapedStringLiteral<'_> {
     EscapeEscapedStringLiteral(s)
+}
+
+pub struct EscapeUnicodeStringLiteral<'a>(&'a str);
+
+impl<'a> fmt::Display for EscapeUnicodeStringLiteral<'a> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        for c in self.0.chars() {
+            match c {
+                '\'' => {
+                    write!(f, "''")?;
+                }
+                '\\' => {
+                    write!(f, r#"\\"#)?;
+                }
+                x if x.is_ascii() => {
+                    write!(f, "{}", c)?;
+                }
+                _ => {
+                    let codepoint = c as u32;
+                    // if the character fits in 32 bits, we can use the \XXXX format
+                    // otherwise, we need to use the \+XXXXXX format
+                    if codepoint <= 0xFFFF {
+                        write!(f, "\\{:04X}", codepoint)?;
+                    } else {
+                        write!(f, "\\+{:06X}", codepoint)?;
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+pub fn escape_unicode_string(s: &str) -> EscapeUnicodeStringLiteral<'_> {
+    EscapeUnicodeStringLiteral(s)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]

@@ -1,14 +1,19 @@
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// http://www.apache.org/licenses/LICENSE-2.0
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 
 //! AST types specific to GRANT/REVOKE/ROLE variants of [`Statement`](crate::ast::Statement)
 //! (commonly referred to as Data Control Language, or DCL)
@@ -190,6 +195,33 @@ impl fmt::Display for AlterRoleOperation {
                     ResetConfig::ConfigName(name) => write!(f, "RESET {name}"),
                 }
             }
+        }
+    }
+}
+
+/// A `USE` (`Statement::Use`) operation
+#[derive(Debug, Clone, PartialEq, PartialOrd, Eq, Ord, Hash)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "visitor", derive(Visit, VisitMut))]
+pub enum Use {
+    Catalog(ObjectName),   // e.g. `USE CATALOG foo.bar`
+    Schema(ObjectName),    // e.g. `USE SCHEMA foo.bar`
+    Database(ObjectName),  // e.g. `USE DATABASE foo.bar`
+    Warehouse(ObjectName), // e.g. `USE WAREHOUSE foo.bar`
+    Object(ObjectName),    // e.g. `USE foo.bar`
+    Default,               // e.g. `USE DEFAULT`
+}
+
+impl fmt::Display for Use {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        f.write_str("USE ")?;
+        match self {
+            Use::Catalog(name) => write!(f, "CATALOG {}", name),
+            Use::Schema(name) => write!(f, "SCHEMA {}", name),
+            Use::Database(name) => write!(f, "DATABASE {}", name),
+            Use::Warehouse(name) => write!(f, "WAREHOUSE {}", name),
+            Use::Object(name) => write!(f, "{}", name),
+            Use::Default => write!(f, "DEFAULT"),
         }
     }
 }

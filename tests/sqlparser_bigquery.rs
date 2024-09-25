@@ -1,19 +1,23 @@
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// http://www.apache.org/licenses/LICENSE-2.0
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 
 #[macro_use]
 mod test_utils;
 
-use sqlparser::ast;
 use std::ops::Deref;
 
 use sqlparser::ast::*;
@@ -224,6 +228,7 @@ fn parse_delete_statement() {
                     with_hints: vec![],
                     version: None,
                     partitions: vec![],
+                    with_ordinality: false,
                 },
                 from[0].relation
             );
@@ -267,8 +272,8 @@ fn parse_create_view_with_options() {
                     ViewColumnDef {
                         name: Ident::new("age"),
                         data_type: None,
-                        options: Some(vec![SqlOption {
-                            name: Ident::new("description"),
+                        options: Some(vec![SqlOption::KeyValue {
+                            key: Ident::new("description"),
                             value: Expr::Value(Value::DoubleQuotedString("field age".to_string())),
                         }])
                     },
@@ -287,8 +292,8 @@ fn parse_create_view_with_options() {
                 unreachable!()
             };
             assert_eq!(
-                &SqlOption {
-                    name: Ident::new("description"),
+                &SqlOption::KeyValue {
+                    key: Ident::new("description"),
                     value: Expr::Value(Value::DoubleQuotedString(
                         "a view that expires in 2 days".to_string()
                     )),
@@ -414,8 +419,8 @@ fn parse_create_table_with_options() {
                             },
                             ColumnOptionDef {
                                 name: None,
-                                option: ColumnOption::Options(vec![SqlOption {
-                                    name: Ident::new("description"),
+                                option: ColumnOption::Options(vec![SqlOption::KeyValue {
+                                    key: Ident::new("description"),
                                     value: Expr::Value(Value::DoubleQuotedString(
                                         "field x".to_string()
                                     )),
@@ -429,8 +434,8 @@ fn parse_create_table_with_options() {
                         collation: None,
                         options: vec![ColumnOptionDef {
                             name: None,
-                            option: ColumnOption::Options(vec![SqlOption {
-                                name: Ident::new("description"),
+                            option: ColumnOption::Options(vec![SqlOption::KeyValue {
+                                key: Ident::new("description"),
                                 value: Expr::Value(Value::DoubleQuotedString(
                                     "field y".to_string()
                                 )),
@@ -448,12 +453,12 @@ fn parse_create_table_with_options() {
                         Ident::new("age"),
                     ])),
                     Some(vec![
-                        SqlOption {
-                            name: Ident::new("partition_expiration_days"),
+                        SqlOption::KeyValue {
+                            key: Ident::new("partition_expiration_days"),
                             value: Expr::Value(number("1")),
                         },
-                        SqlOption {
-                            name: Ident::new("description"),
+                        SqlOption::KeyValue {
+                            key: Ident::new("description"),
                             value: Expr::Value(Value::DoubleQuotedString(
                                 "table option description".to_string()
                             )),
@@ -488,34 +493,40 @@ fn parse_nested_data_types() {
                 vec![
                     ColumnDef {
                         name: Ident::new("x"),
-                        data_type: DataType::Struct(vec![
-                            StructField {
-                                field_name: Some("a".into()),
-                                field_type: DataType::Array(ArrayElemTypeDef::AngleBracket(
-                                    Box::new(DataType::Int64,)
-                                )),
-                                not_null: false,
-                                comment: None,
-                            },
-                            StructField {
-                                field_name: Some("b".into()),
-                                field_type: DataType::Bytes(Some(42)),
-                                not_null: false,
-                                comment: None,
-                            },
-                        ]),
+                        data_type: DataType::Struct(
+                            vec![
+                                StructField {
+                                    field_name: Some("a".into()),
+                                    field_type: DataType::Array(ArrayElemTypeDef::AngleBracket(
+                                        Box::new(DataType::Int64,)
+                                    )),
+                                    not_null: false,
+                                    comment: None,
+                                },
+                                StructField {
+                                    field_name: Some("b".into()),
+                                    field_type: DataType::Bytes(Some(42)),
+                                    not_null: false,
+                                    comment: None,
+                                },
+                            ],
+                            StructBracketKind::AngleBrackets
+                        ),
                         collation: None,
                         options: vec![],
                     },
                     ColumnDef {
                         name: Ident::new("y"),
                         data_type: DataType::Array(ArrayElemTypeDef::AngleBracket(Box::new(
-                            DataType::Struct(vec![StructField {
-                                field_name: None,
-                                field_type: DataType::Int64,
-                                not_null: false,
-                                comment: None,
-                            }]),
+                            DataType::Struct(
+                                vec![StructField {
+                                    field_name: None,
+                                    field_type: DataType::Int64,
+                                    not_null: false,
+                                    comment: None,
+                                }],
+                                StructBracketKind::AngleBrackets
+                            ),
                         ))),
                         collation: None,
                         options: vec![],
@@ -721,12 +732,15 @@ fn parse_typed_struct_syntax_bigquery() {
                 },
                 StructField {
                     field_name: Some("str".into()),
-                    field_type: DataType::Struct(vec![StructField {
-                        field_name: None,
-                        field_type: DataType::Bool,
-                        not_null: false,
-                        comment: None,
-                    }]),
+                    field_type: DataType::Struct(
+                        vec![StructField {
+                            field_name: None,
+                            field_type: DataType::Bool,
+                            not_null: false,
+                            comment: None,
+                        }],
+                        StructBracketKind::AngleBrackets
+                    ),
                     not_null: false,
                     comment: None,
                 },
@@ -747,14 +761,17 @@ fn parse_typed_struct_syntax_bigquery() {
             fields: vec![
                 StructField {
                     field_name: Some("x".into()),
-                    field_type: DataType::Struct(Default::default()),
+                    field_type: DataType::Struct(
+                        Default::default(),
+                        StructBracketKind::AngleBrackets
+                    ),
                     not_null: false,
                     comment: None,
                 },
                 StructField {
                     field_name: Some("y".into()),
                     field_type: DataType::Array(ArrayElemTypeDef::AngleBracket(Box::new(
-                        DataType::Struct(Default::default())
+                        DataType::Struct(Default::default(), StructBracketKind::AngleBrackets)
                     ))),
                     not_null: false,
                     comment: None,
@@ -851,22 +868,20 @@ fn parse_typed_struct_syntax_bigquery() {
         expr_from_projection(&select.projection[3])
     );
 
-    let sql = r#"SELECT STRUCT<INTERVAL>(INTERVAL '1-2 3 4:5:6.789999'), STRUCT<JSON>(JSON '{"class" : {"students" : [{"name" : "Jane"}]}}')"#;
+    let sql = r#"SELECT STRUCT<INTERVAL>(INTERVAL '2' HOUR), STRUCT<JSON>(JSON '{"class" : {"students" : [{"name" : "Jane"}]}}')"#;
     let select = bigquery().verified_only_select(sql);
     assert_eq!(2, select.projection.len());
     assert_eq!(
         &Expr::Struct {
-            values: vec![Expr::Interval(ast::Interval::Standard {
-                value: Box::new(Expr::Value(Value::SingleQuotedString(
-                    "1-2 3 4:5:6.789999".to_string()
-                ))),
+            values: vec![Expr::Interval(Interval::Standard {
+                value: Box::new(Expr::Value(Value::SingleQuotedString("2".to_string()))),
                 unit: IntervalUnit {
-                    leading_field: None,
+                    leading_field: Some(DateTimeField::Hour),
                     leading_precision: None,
                     last_field: None,
                     fractional_seconds_precision: None
-                },
-            }),],
+                }
+            })],
             fields: vec![StructField {
                 field_name: None,
                 field_type: DataType::Interval(IntervalUnit {
@@ -1079,12 +1094,15 @@ fn parse_typed_struct_syntax_bigquery_and_generic() {
                 },
                 StructField {
                     field_name: Some("str".into()),
-                    field_type: DataType::Struct(vec![StructField {
-                        field_name: None,
-                        field_type: DataType::Bool,
-                        not_null: false,
-                        comment: None,
-                    }]),
+                    field_type: DataType::Struct(
+                        vec![StructField {
+                            field_name: None,
+                            field_type: DataType::Bool,
+                            not_null: false,
+                            comment: None,
+                        }],
+                        StructBracketKind::AngleBrackets
+                    ),
                     not_null: false,
                     comment: None,
                 },
@@ -1105,14 +1123,17 @@ fn parse_typed_struct_syntax_bigquery_and_generic() {
             fields: vec![
                 StructField {
                     field_name: Some("x".into()),
-                    field_type: DataType::Struct(Default::default()),
+                    field_type: DataType::Struct(
+                        Default::default(),
+                        StructBracketKind::AngleBrackets
+                    ),
                     not_null: false,
                     comment: None,
                 },
                 StructField {
                     field_name: Some("y".into()),
                     field_type: DataType::Array(ArrayElemTypeDef::AngleBracket(Box::new(
-                        DataType::Struct(Default::default())
+                        DataType::Struct(Default::default(), StructBracketKind::AngleBrackets)
                     ))),
                     not_null: false,
                     comment: None,
@@ -1209,17 +1230,15 @@ fn parse_typed_struct_syntax_bigquery_and_generic() {
         expr_from_projection(&select.projection[3])
     );
 
-    let sql = r#"SELECT STRUCT<INTERVAL>(INTERVAL '1-2 3 4:5:6.789999'), STRUCT<JSON>(JSON '{"class" : {"students" : [{"name" : "Jane"}]}}')"#;
+    let sql = r#"SELECT STRUCT<INTERVAL>(INTERVAL '1' MONTH), STRUCT<JSON>(JSON '{"class" : {"students" : [{"name" : "Jane"}]}}')"#;
     let select = bigquery_and_generic().verified_only_select(sql);
     assert_eq!(2, select.projection.len());
     assert_eq!(
         &Expr::Struct {
-            values: vec![Expr::Interval(ast::Interval::Standard {
-                value: Box::new(Expr::Value(Value::SingleQuotedString(
-                    "1-2 3 4:5:6.789999".to_string()
-                ))),
+            values: vec![Expr::Interval(Interval::Standard {
+                value: Box::new(Expr::Value(Value::SingleQuotedString("1".to_string()))),
                 unit: IntervalUnit {
-                    leading_field: None,
+                    leading_field: Some(DateTimeField::Month),
                     leading_precision: None,
                     last_field: None,
                     fractional_seconds_precision: None
@@ -1477,6 +1496,7 @@ fn parse_table_identifiers() {
                     with_hints: vec![],
                     version: None,
                     partitions: vec![],
+                    with_ordinality: false,
                 },
                 joins: vec![]
             },]
@@ -1649,6 +1669,7 @@ fn parse_table_time_travel() {
                     Value::SingleQuotedString(version)
                 ))),
                 partitions: vec![],
+                with_ordinality: false,
             },
             joins: vec![]
         },]
@@ -1675,8 +1696,10 @@ fn parse_join_constraint_unnest_alias() {
                     Ident::new("a")
                 ])],
                 with_offset: false,
-                with_offset_alias: None
+                with_offset_alias: None,
+                with_ordinality: false,
             },
+            global: false,
             join_operator: JoinOperator::Inner(JoinConstraint::On(Expr::BinaryOp {
                 left: Box::new(Expr::Identifier("c1".into())),
                 op: BinaryOperator::Eq,
@@ -1744,6 +1767,7 @@ fn parse_merge() {
                     with_hints: Default::default(),
                     version: Default::default(),
                     partitions: Default::default(),
+                    with_ordinality: false,
                 },
                 table
             );
@@ -1758,6 +1782,7 @@ fn parse_merge() {
                     with_hints: Default::default(),
                     version: Default::default(),
                     partitions: Default::default(),
+                    with_ordinality: false,
                 },
                 source
             );
@@ -2109,8 +2134,8 @@ fn test_bigquery_create_function() {
             function_body: Some(CreateFunctionBody::AsAfterOptions(Expr::Value(number(
                 "42"
             )))),
-            options: Some(vec![SqlOption {
-                name: Ident::new("x"),
+            options: Some(vec![SqlOption::KeyValue {
+                key: Ident::new("x"),
                 value: Expr::Value(Value::SingleQuotedString("y".into())),
             }]),
             behavior: None,
@@ -2253,6 +2278,7 @@ fn parse_extract_weekday() {
     assert_eq!(
         &Expr::Extract {
             field: DateTimeField::Week(Some(Ident::new("MONDAY"))),
+            syntax: ExtractSyntax::From,
             expr: Box::new(Expr::Identifier(Ident::new("d"))),
         },
         expr_from_projection(only(&select.projection)),

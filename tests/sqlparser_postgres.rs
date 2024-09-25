@@ -1,14 +1,19 @@
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// http://www.apache.org/licenses/LICENSE-2.0
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 
 #![warn(clippy::all)]
 //! Test SQL syntax specific to PostgreSQL. The parser based on the
@@ -277,6 +282,26 @@ fn parse_create_sequence() {
         "CREATE TEMPORARY SEQUENCE IF NOT EXISTS name3 INCREMENT 1 NO MINVALUE MAXVALUE 20 OWNED BY NONE",
     );
 
+    let sql7 = "CREATE SEQUENCE name4
+    AS BIGINT
+    INCREMENT   -15
+    MINVALUE - 2000  MAXVALUE -50
+    START WITH -   60";
+    pg().one_statement_parses_to(
+        sql7,
+        "CREATE SEQUENCE name4 AS BIGINT INCREMENT -15 MINVALUE -2000 MAXVALUE -50 START WITH -60",
+    );
+
+    let sql8 = "CREATE SEQUENCE name5
+    AS BIGINT
+    INCREMENT   +10
+    MINVALUE + 30  MAXVALUE +5000
+    START WITH +   45";
+    pg().one_statement_parses_to(
+        sql8,
+        "CREATE SEQUENCE name5 AS BIGINT INCREMENT +10 MINVALUE +30 MAXVALUE +5000 START WITH +45",
+    );
+
     assert!(matches!(
         pg().parse_sql_statements("CREATE SEQUENCE foo INCREMENT 1 NO MINVALUE NO"),
         Err(ParserError::ParserError(_))
@@ -461,16 +486,16 @@ fn parse_create_table_with_defaults() {
             assert_eq!(
                 with_options,
                 vec![
-                    SqlOption {
-                        name: "fillfactor".into(),
+                    SqlOption::KeyValue {
+                        key: "fillfactor".into(),
                         value: Expr::Value(number("20"))
                     },
-                    SqlOption {
-                        name: "user_catalog_table".into(),
+                    SqlOption::KeyValue {
+                        key: "user_catalog_table".into(),
                         value: Expr::Value(Value::Boolean(true))
                     },
-                    SqlOption {
-                        name: "autovacuum_vacuum_threshold".into(),
+                    SqlOption::KeyValue {
+                        key: "autovacuum_vacuum_threshold".into(),
                         value: Expr::Value(number("100"))
                     },
                 ]
@@ -571,6 +596,10 @@ fn parse_alter_table_constraints_rename() {
 fn parse_alter_table_disable() {
     pg_and_generic().verified_stmt("ALTER TABLE tab DISABLE ROW LEVEL SECURITY");
     pg_and_generic().verified_stmt("ALTER TABLE tab DISABLE RULE rule_name");
+}
+
+#[test]
+fn parse_alter_table_disable_trigger() {
     pg_and_generic().verified_stmt("ALTER TABLE tab DISABLE TRIGGER ALL");
     pg_and_generic().verified_stmt("ALTER TABLE tab DISABLE TRIGGER USER");
     pg_and_generic().verified_stmt("ALTER TABLE tab DISABLE TRIGGER trigger_name");
@@ -587,6 +616,13 @@ fn parse_alter_table_enable() {
     pg_and_generic().verified_stmt("ALTER TABLE tab ENABLE TRIGGER ALL");
     pg_and_generic().verified_stmt("ALTER TABLE tab ENABLE TRIGGER USER");
     pg_and_generic().verified_stmt("ALTER TABLE tab ENABLE TRIGGER trigger_name");
+}
+
+#[test]
+fn parse_truncate_table() {
+    pg_and_generic()
+        .verified_stmt("TRUNCATE TABLE \"users\", \"orders\" RESTART IDENTITY RESTRICT");
+    pg_and_generic().verified_stmt("TRUNCATE users, orders RESTART IDENTITY");
 }
 
 #[test]
@@ -677,6 +713,7 @@ fn parse_alter_table_add_columns() {
             only,
             operations,
             location: _,
+            on_cluster: _,
         } => {
             assert_eq!(name.to_string(), "tab");
             assert!(if_exists);
@@ -711,6 +748,79 @@ fn parse_alter_table_add_columns() {
         }
         _ => unreachable!(),
     }
+}
+
+#[test]
+fn parse_alter_table_owner_to() {
+    struct TestCase {
+        sql: &'static str,
+        expected_owner: Owner,
+    }
+
+    let test_cases = vec![
+        TestCase {
+            sql: "ALTER TABLE tab OWNER TO new_owner",
+            expected_owner: Owner::Ident(Ident::new("new_owner".to_string())),
+        },
+        TestCase {
+            sql: "ALTER TABLE tab OWNER TO postgres",
+            expected_owner: Owner::Ident(Ident::new("postgres".to_string())),
+        },
+        TestCase {
+            sql: "ALTER TABLE tab OWNER TO CREATE", // treats CREATE as an identifier
+            expected_owner: Owner::Ident(Ident::new("CREATE".to_string())),
+        },
+        TestCase {
+            sql: "ALTER TABLE tab OWNER TO \"new_owner\"",
+            expected_owner: Owner::Ident(Ident::with_quote('\"', "new_owner".to_string())),
+        },
+        TestCase {
+            sql: "ALTER TABLE tab OWNER TO CURRENT_USER",
+            expected_owner: Owner::CurrentUser,
+        },
+        TestCase {
+            sql: "ALTER TABLE tab OWNER TO CURRENT_ROLE",
+            expected_owner: Owner::CurrentRole,
+        },
+        TestCase {
+            sql: "ALTER TABLE tab OWNER TO SESSION_USER",
+            expected_owner: Owner::SessionUser,
+        },
+    ];
+
+    for case in test_cases {
+        match pg_and_generic().verified_stmt(case.sql) {
+            Statement::AlterTable {
+                name,
+                if_exists: _,
+                only: _,
+                operations,
+                location: _,
+                on_cluster: _,
+            } => {
+                assert_eq!(name.to_string(), "tab");
+                assert_eq!(
+                    operations,
+                    vec![AlterTableOperation::OwnerTo {
+                        new_owner: case.expected_owner.clone()
+                    }]
+                );
+            }
+            _ => unreachable!("Expected an AlterTable statement"),
+        }
+    }
+
+    let res = pg().parse_sql_statements("ALTER TABLE tab OWNER TO CREATE FOO");
+    assert_eq!(
+        ParserError::ParserError("Expected: end of statement, found: FOO".to_string()),
+        res.unwrap_err()
+    );
+
+    let res = pg().parse_sql_statements("ALTER TABLE tab OWNER TO 4");
+    assert_eq!(
+        ParserError::ParserError("Expected: CURRENT_USER, CURRENT_ROLE, SESSION_USER or identifier after OWNER TO. sql parser error: Expected: identifier, found: 4".to_string()),
+        res.unwrap_err()
+    );
 }
 
 #[test]
@@ -1088,8 +1198,9 @@ fn parse_copy_to() {
                     into: None,
                     from: vec![],
                     lateral_views: vec![],
+                    prewhere: None,
                     selection: None,
-                    group_by: GroupByExpr::Expressions(vec![]),
+                    group_by: GroupByExpr::Expressions(vec![], vec![]),
                     having: None,
                     named_window: vec![],
                     window_before_qualify: false,
@@ -1100,13 +1211,15 @@ fn parse_copy_to() {
                     value_table_mode: None,
                     connect_by: None,
                 }))),
-                order_by: vec![],
+                order_by: None,
                 limit: None,
                 limit_by: vec![],
                 offset: None,
                 fetch: None,
                 locks: vec![],
                 for_clause: None,
+                settings: None,
+                format_clause: None,
             })),
             to: true,
             target: CopyTarget::File {
@@ -2188,6 +2301,7 @@ fn parse_create_index() {
             if_not_exists,
             nulls_distinct: None,
             include,
+            with,
             predicate: None,
         }) => {
             assert_eq_vec(&["my_index"], &name);
@@ -2198,6 +2312,7 @@ fn parse_create_index() {
             assert!(if_not_exists);
             assert_eq_vec(&["col1", "col2"], &columns);
             assert!(include.is_empty());
+            assert!(with.is_empty());
         }
         _ => unreachable!(),
     }
@@ -2217,6 +2332,7 @@ fn parse_create_anonymous_index() {
             if_not_exists,
             include,
             nulls_distinct: None,
+            with,
             predicate: None,
         }) => {
             assert_eq!(None, name);
@@ -2227,6 +2343,7 @@ fn parse_create_anonymous_index() {
             assert!(!if_not_exists);
             assert_eq_vec(&["col1", "col2"], &columns);
             assert!(include.is_empty());
+            assert!(with.is_empty());
         }
         _ => unreachable!(),
     }
@@ -2246,6 +2363,7 @@ fn parse_create_index_concurrently() {
             if_not_exists,
             include,
             nulls_distinct: None,
+            with,
             predicate: None,
         }) => {
             assert_eq_vec(&["my_index"], &name);
@@ -2256,6 +2374,7 @@ fn parse_create_index_concurrently() {
             assert!(if_not_exists);
             assert_eq_vec(&["col1", "col2"], &columns);
             assert!(include.is_empty());
+            assert!(with.is_empty());
         }
         _ => unreachable!(),
     }
@@ -2275,6 +2394,7 @@ fn parse_create_index_with_predicate() {
             if_not_exists,
             include,
             nulls_distinct: None,
+            with,
             predicate: Some(_),
         }) => {
             assert_eq_vec(&["my_index"], &name);
@@ -2285,6 +2405,7 @@ fn parse_create_index_with_predicate() {
             assert!(if_not_exists);
             assert_eq_vec(&["col1", "col2"], &columns);
             assert!(include.is_empty());
+            assert!(with.is_empty());
         }
         _ => unreachable!(),
     }
@@ -2304,6 +2425,7 @@ fn parse_create_index_with_include() {
             if_not_exists,
             include,
             nulls_distinct: None,
+            with,
             predicate: None,
         }) => {
             assert_eq_vec(&["my_index"], &name);
@@ -2314,6 +2436,7 @@ fn parse_create_index_with_include() {
             assert!(if_not_exists);
             assert_eq_vec(&["col1", "col2"], &columns);
             assert_eq_vec(&["col3"], &include);
+            assert!(with.is_empty());
         }
         _ => unreachable!(),
     }
@@ -2333,6 +2456,7 @@ fn parse_create_index_with_nulls_distinct() {
             if_not_exists,
             include,
             nulls_distinct: Some(nulls_distinct),
+            with,
             predicate: None,
         }) => {
             assert_eq_vec(&["my_index"], &name);
@@ -2344,6 +2468,7 @@ fn parse_create_index_with_nulls_distinct() {
             assert_eq_vec(&["col1", "col2"], &columns);
             assert!(include.is_empty());
             assert!(!nulls_distinct);
+            assert!(with.is_empty());
         }
         _ => unreachable!(),
     }
@@ -2360,6 +2485,7 @@ fn parse_create_index_with_nulls_distinct() {
             if_not_exists,
             include,
             nulls_distinct: Some(nulls_distinct),
+            with,
             predicate: None,
         }) => {
             assert_eq_vec(&["my_index"], &name);
@@ -2371,6 +2497,7 @@ fn parse_create_index_with_nulls_distinct() {
             assert_eq_vec(&["col1", "col2"], &columns);
             assert!(include.is_empty());
             assert!(nulls_distinct);
+            assert!(with.is_empty());
         }
         _ => unreachable!(),
     }
@@ -2396,8 +2523,9 @@ fn parse_array_subquery_expr() {
                         into: None,
                         from: vec![],
                         lateral_views: vec![],
+                        prewhere: None,
                         selection: None,
-                        group_by: GroupByExpr::Expressions(vec![]),
+                        group_by: GroupByExpr::Expressions(vec![], vec![]),
                         cluster_by: vec![],
                         distribute_by: vec![],
                         sort_by: vec![],
@@ -2415,8 +2543,9 @@ fn parse_array_subquery_expr() {
                         into: None,
                         from: vec![],
                         lateral_views: vec![],
+                        prewhere: None,
                         selection: None,
-                        group_by: GroupByExpr::Expressions(vec![]),
+                        group_by: GroupByExpr::Expressions(vec![], vec![]),
                         cluster_by: vec![],
                         distribute_by: vec![],
                         sort_by: vec![],
@@ -2428,13 +2557,15 @@ fn parse_array_subquery_expr() {
                         connect_by: None,
                     }))),
                 }),
-                order_by: vec![],
+                order_by: None,
                 limit: None,
                 limit_by: vec![],
                 offset: None,
                 fetch: None,
                 locks: vec![],
                 for_clause: None,
+                settings: None,
+                format_clause: None,
             })),
             filter: None,
             null_treatment: None,
@@ -3436,6 +3567,7 @@ fn parse_delimited_identifiers() {
             args,
             with_hints,
             version,
+            with_ordinality: _,
             partitions: _,
         } => {
             assert_eq!(vec![Ident::with_quote('"', "a table")], name.0);
@@ -3555,7 +3687,7 @@ fn parse_drop_function() {
         pg().verified_stmt(sql),
         Statement::DropFunction {
             if_exists: true,
-            func_desc: vec![DropFunctionDesc {
+            func_desc: vec![FunctionDesc {
                 name: ObjectName(vec![Ident {
                     value: "test_func".to_string(),
                     quote_style: None
@@ -3571,7 +3703,7 @@ fn parse_drop_function() {
         pg().verified_stmt(sql),
         Statement::DropFunction {
             if_exists: true,
-            func_desc: vec![DropFunctionDesc {
+            func_desc: vec![FunctionDesc {
                 name: ObjectName(vec![Ident {
                     value: "test_func".to_string(),
                     quote_style: None
@@ -3596,7 +3728,7 @@ fn parse_drop_function() {
         Statement::DropFunction {
             if_exists: true,
             func_desc: vec![
-                DropFunctionDesc {
+                FunctionDesc {
                     name: ObjectName(vec![Ident {
                         value: "test_func1".to_string(),
                         quote_style: None
@@ -3614,7 +3746,7 @@ fn parse_drop_function() {
                         }
                     ]),
                 },
-                DropFunctionDesc {
+                FunctionDesc {
                     name: ObjectName(vec![Ident {
                         value: "test_func2".to_string(),
                         quote_style: None
@@ -3635,6 +3767,108 @@ fn parse_drop_function() {
             ],
             option: None
         }
+    );
+}
+
+#[test]
+fn parse_drop_procedure() {
+    let sql = "DROP PROCEDURE IF EXISTS test_proc";
+    assert_eq!(
+        pg().verified_stmt(sql),
+        Statement::DropProcedure {
+            if_exists: true,
+            proc_desc: vec![FunctionDesc {
+                name: ObjectName(vec![Ident {
+                    value: "test_proc".to_string(),
+                    quote_style: None
+                }]),
+                args: None
+            }],
+            option: None
+        }
+    );
+
+    let sql = "DROP PROCEDURE IF EXISTS test_proc(a INTEGER, IN b INTEGER = 1)";
+    assert_eq!(
+        pg().verified_stmt(sql),
+        Statement::DropProcedure {
+            if_exists: true,
+            proc_desc: vec![FunctionDesc {
+                name: ObjectName(vec![Ident {
+                    value: "test_proc".to_string(),
+                    quote_style: None
+                }]),
+                args: Some(vec![
+                    OperateFunctionArg::with_name("a", DataType::Integer(None)),
+                    OperateFunctionArg {
+                        mode: Some(ArgMode::In),
+                        name: Some("b".into()),
+                        data_type: DataType::Integer(None),
+                        default_expr: Some(Expr::Value(Value::Number("1".parse().unwrap(), None))),
+                    }
+                ]),
+            }],
+            option: None
+        }
+    );
+
+    let sql = "DROP PROCEDURE IF EXISTS test_proc1(a INTEGER, IN b INTEGER = 1), test_proc2(a VARCHAR, IN b INTEGER = 1)";
+    assert_eq!(
+        pg().verified_stmt(sql),
+        Statement::DropProcedure {
+            if_exists: true,
+            proc_desc: vec![
+                FunctionDesc {
+                    name: ObjectName(vec![Ident {
+                        value: "test_proc1".to_string(),
+                        quote_style: None
+                    }]),
+                    args: Some(vec![
+                        OperateFunctionArg::with_name("a", DataType::Integer(None)),
+                        OperateFunctionArg {
+                            mode: Some(ArgMode::In),
+                            name: Some("b".into()),
+                            data_type: DataType::Integer(None),
+                            default_expr: Some(Expr::Value(Value::Number(
+                                "1".parse().unwrap(),
+                                None
+                            ))),
+                        }
+                    ]),
+                },
+                FunctionDesc {
+                    name: ObjectName(vec![Ident {
+                        value: "test_proc2".to_string(),
+                        quote_style: None
+                    }]),
+                    args: Some(vec![
+                        OperateFunctionArg::with_name("a", DataType::Varchar(None)),
+                        OperateFunctionArg {
+                            mode: Some(ArgMode::In),
+                            name: Some("b".into()),
+                            data_type: DataType::Integer(None),
+                            default_expr: Some(Expr::Value(Value::Number(
+                                "1".parse().unwrap(),
+                                None
+                            ))),
+                        }
+                    ]),
+                }
+            ],
+            option: None
+        }
+    );
+
+    let res = pg().parse_sql_statements("DROP PROCEDURE testproc DROP");
+    assert_eq!(
+        ParserError::ParserError("Expected: end of statement, found: DROP".to_string()),
+        res.unwrap_err()
+    );
+
+    let res = pg().parse_sql_statements("DROP PROCEDURE testproc SET NULL");
+    assert_eq!(
+        ParserError::ParserError("Expected: end of statement, found: SET".to_string()),
+        res.unwrap_err()
     );
 }
 
@@ -3725,14 +3959,17 @@ fn parse_select_group_by_grouping_sets() {
         "SELECT brand, size, sum(sales) FROM items_sold GROUP BY size, GROUPING SETS ((brand), (size), ())"
     );
     assert_eq!(
-        GroupByExpr::Expressions(vec![
-            Expr::Identifier(Ident::new("size")),
-            Expr::GroupingSets(vec![
-                vec![Expr::Identifier(Ident::new("brand"))],
-                vec![Expr::Identifier(Ident::new("size"))],
-                vec![],
-            ]),
-        ]),
+        GroupByExpr::Expressions(
+            vec![
+                Expr::Identifier(Ident::new("size")),
+                Expr::GroupingSets(vec![
+                    vec![Expr::Identifier(Ident::new("brand"))],
+                    vec![Expr::Identifier(Ident::new("size"))],
+                    vec![],
+                ]),
+            ],
+            vec![]
+        ),
         select.group_by
     );
 }
@@ -3743,13 +3980,16 @@ fn parse_select_group_by_rollup() {
         "SELECT brand, size, sum(sales) FROM items_sold GROUP BY size, ROLLUP (brand, size)",
     );
     assert_eq!(
-        GroupByExpr::Expressions(vec![
-            Expr::Identifier(Ident::new("size")),
-            Expr::Rollup(vec![
-                vec![Expr::Identifier(Ident::new("brand"))],
-                vec![Expr::Identifier(Ident::new("size"))],
-            ]),
-        ]),
+        GroupByExpr::Expressions(
+            vec![
+                Expr::Identifier(Ident::new("size")),
+                Expr::Rollup(vec![
+                    vec![Expr::Identifier(Ident::new("brand"))],
+                    vec![Expr::Identifier(Ident::new("size"))],
+                ]),
+            ],
+            vec![]
+        ),
         select.group_by
     );
 }
@@ -3760,13 +4000,16 @@ fn parse_select_group_by_cube() {
         "SELECT brand, size, sum(sales) FROM items_sold GROUP BY size, CUBE (brand, size)",
     );
     assert_eq!(
-        GroupByExpr::Expressions(vec![
-            Expr::Identifier(Ident::new("size")),
-            Expr::Cube(vec![
-                vec![Expr::Identifier(Ident::new("brand"))],
-                vec![Expr::Identifier(Ident::new("size"))],
-            ]),
-        ]),
+        GroupByExpr::Expressions(
+            vec![
+                Expr::Identifier(Ident::new("size")),
+                Expr::Cube(vec![
+                    vec![Expr::Identifier(Ident::new("brand"))],
+                    vec![Expr::Identifier(Ident::new("size"))],
+                ]),
+            ],
+            vec![]
+        ),
         select.group_by
     );
 }
@@ -3774,11 +4017,75 @@ fn parse_select_group_by_cube() {
 #[test]
 fn parse_truncate() {
     let truncate = pg_and_generic().verified_stmt("TRUNCATE db.table_name");
+    let table_name = ObjectName(vec![Ident::new("db"), Ident::new("table_name")]);
+    let table_names = vec![TruncateTableTarget {
+        name: table_name.clone(),
+    }];
     assert_eq!(
         Statement::Truncate {
-            table_name: ObjectName(vec![Ident::new("db"), Ident::new("table_name")]),
+            table_names,
             partitions: None,
-            table: false
+            table: false,
+            only: false,
+            identity: None,
+            cascade: None,
+            on_cluster: None,
+        },
+        truncate
+    );
+}
+
+#[test]
+fn parse_truncate_with_options() {
+    let truncate = pg_and_generic()
+        .verified_stmt("TRUNCATE TABLE ONLY db.table_name RESTART IDENTITY CASCADE");
+
+    let table_name = ObjectName(vec![Ident::new("db"), Ident::new("table_name")]);
+    let table_names = vec![TruncateTableTarget {
+        name: table_name.clone(),
+    }];
+
+    assert_eq!(
+        Statement::Truncate {
+            table_names,
+            partitions: None,
+            table: true,
+            only: true,
+            identity: Some(TruncateIdentityOption::Restart),
+            cascade: Some(TruncateCascadeOption::Cascade),
+            on_cluster: None,
+        },
+        truncate
+    );
+}
+
+#[test]
+fn parse_truncate_with_table_list() {
+    let truncate = pg().verified_stmt(
+        "TRUNCATE TABLE db.table_name, db.other_table_name RESTART IDENTITY CASCADE",
+    );
+
+    let table_name_a = ObjectName(vec![Ident::new("db"), Ident::new("table_name")]);
+    let table_name_b = ObjectName(vec![Ident::new("db"), Ident::new("other_table_name")]);
+
+    let table_names = vec![
+        TruncateTableTarget {
+            name: table_name_a.clone(),
+        },
+        TruncateTableTarget {
+            name: table_name_b.clone(),
+        },
+    ];
+
+    assert_eq!(
+        Statement::Truncate {
+            table_names,
+            partitions: None,
+            table: true,
+            only: false,
+            identity: Some(TruncateIdentityOption::Restart),
+            cascade: Some(TruncateCascadeOption::Cascade),
+            on_cluster: None,
         },
         truncate
     );
@@ -3863,6 +4170,50 @@ fn parse_create_table_with_alias() {
 }
 
 #[test]
+fn parse_create_table_with_partition_by() {
+    let sql = "CREATE TABLE t1 (a INT, b TEXT) PARTITION BY RANGE(a)";
+    match pg_and_generic().verified_stmt(sql) {
+        Statement::CreateTable(create_table) => {
+            assert_eq!("t1", create_table.name.to_string());
+            assert_eq!(
+                vec![
+                    ColumnDef {
+                        name: "a".into(),
+                        data_type: DataType::Int(None),
+                        collation: None,
+                        options: vec![]
+                    },
+                    ColumnDef {
+                        name: "b".into(),
+                        data_type: DataType::Text,
+                        collation: None,
+                        options: vec![]
+                    }
+                ],
+                create_table.columns
+            );
+            match *create_table.partition_by.unwrap() {
+                Expr::Function(f) => {
+                    assert_eq!("RANGE", f.name.to_string());
+                    assert_eq!(
+                        FunctionArguments::List(FunctionArgumentList {
+                            duplicate_treatment: None,
+                            clauses: vec![],
+                            args: vec![FunctionArg::Unnamed(FunctionArgExpr::Expr(
+                                Expr::Identifier(Ident::new("a"))
+                            ))],
+                        }),
+                        f.args
+                    );
+                }
+                _ => unreachable!(),
+            }
+        }
+        _ => unreachable!(),
+    }
+}
+
+#[test]
 fn parse_join_constraint_unnest_alias() {
     assert_eq!(
         only(
@@ -3878,8 +4229,10 @@ fn parse_join_constraint_unnest_alias() {
                     Ident::new("a")
                 ])],
                 with_offset: false,
-                with_offset_alias: None
+                with_offset_alias: None,
+                with_ordinality: false,
             },
+            global: false,
             join_operator: JoinOperator::Inner(JoinConstraint::On(Expr::BinaryOp {
                 left: Box::new(Expr::Identifier("c1".into())),
                 op: BinaryOperator::Eq,
@@ -3940,13 +4293,15 @@ fn test_simple_postgres_insert_with_alias() {
                         Expr::Value(Value::Number("123".to_string(), None))
                     ]]
                 })),
-                order_by: vec![],
+                order_by: None,
                 limit: None,
                 limit_by: vec![],
                 offset: None,
                 fetch: None,
                 locks: vec![],
-                for_clause: None
+                for_clause: None,
+                settings: None,
+                format_clause: None,
             })),
             partitioned: None,
             after_columns: vec![],
@@ -4007,13 +4362,15 @@ fn test_simple_postgres_insert_with_alias() {
                         ))
                     ]]
                 })),
-                order_by: vec![],
+                order_by: None,
                 limit: None,
                 limit_by: vec![],
                 offset: None,
                 fetch: None,
                 locks: vec![],
-                for_clause: None
+                for_clause: None,
+                settings: None,
+                format_clause: None,
             })),
             partitioned: None,
             after_columns: vec![],
@@ -4070,13 +4427,15 @@ fn test_simple_insert_with_quoted_alias() {
                         Expr::Value(Value::SingleQuotedString("0123".to_string()))
                     ]]
                 })),
-                order_by: vec![],
+                order_by: None,
                 limit: None,
                 limit_by: vec![],
                 offset: None,
                 fetch: None,
                 locks: vec![],
-                for_clause: None
+                for_clause: None,
+                settings: None,
+                format_clause: None,
             })),
             partitioned: None,
             after_columns: vec![],
@@ -4167,12 +4526,12 @@ fn parse_create_table_with_options() {
         Statement::CreateTable(CreateTable { with_options, .. }) => {
             assert_eq!(
                 vec![
-                    SqlOption {
-                        name: "foo".into(),
+                    SqlOption::KeyValue {
+                        key: "foo".into(),
                         value: Expr::Value(Value::SingleQuotedString("bar".into())),
                     },
-                    SqlOption {
-                        name: "a".into(),
+                    SqlOption::KeyValue {
+                        key: "a".into(),
                         value: Expr::Value(number("123")),
                     },
                 ],
@@ -4181,4 +4540,592 @@ fn parse_create_table_with_options() {
         }
         _ => unreachable!(),
     }
+}
+
+#[test]
+fn test_table_function_with_ordinality() {
+    let from = pg_and_generic()
+        .verified_only_select("SELECT * FROM generate_series(1, 10) WITH ORDINALITY AS t")
+        .from;
+    assert_eq!(1, from.len());
+    match from[0].relation {
+        TableFactor::Table {
+            ref name,
+            with_ordinality: true,
+            ..
+        } => {
+            assert_eq!("generate_series", name.to_string().as_str());
+        }
+        _ => panic!("Expecting TableFactor::Table with ordinality"),
+    }
+}
+
+#[test]
+fn test_table_unnest_with_ordinality() {
+    let from = pg_and_generic()
+        .verified_only_select("SELECT * FROM UNNEST([10, 20, 30]) WITH ORDINALITY AS t")
+        .from;
+    assert_eq!(1, from.len());
+    match from[0].relation {
+        TableFactor::UNNEST {
+            with_ordinality: true,
+            ..
+        } => {}
+        _ => panic!("Expecting TableFactor::UNNEST with ordinality"),
+    }
+}
+
+#[test]
+fn test_escaped_string_literal() {
+    match pg().verified_expr(r#"E'\n'"#) {
+        Expr::Value(Value::EscapedStringLiteral(s)) => {
+            assert_eq!("\n", s);
+        }
+        _ => unreachable!(),
+    }
+}
+
+#[test]
+fn parse_create_simple_before_insert_trigger() {
+    let sql = "CREATE TRIGGER check_insert BEFORE INSERT ON accounts FOR EACH ROW EXECUTE FUNCTION check_account_insert";
+    let expected = Statement::CreateTrigger {
+        or_replace: false,
+        is_constraint: false,
+        name: ObjectName(vec![Ident::new("check_insert")]),
+        period: TriggerPeriod::Before,
+        events: vec![TriggerEvent::Insert],
+        table_name: ObjectName(vec![Ident::new("accounts")]),
+        referenced_table_name: None,
+        referencing: vec![],
+        trigger_object: TriggerObject::Row,
+        include_each: true,
+        condition: None,
+        exec_body: TriggerExecBody {
+            exec_type: TriggerExecBodyType::Function,
+            func_desc: FunctionDesc {
+                name: ObjectName(vec![Ident::new("check_account_insert")]),
+                args: None,
+            },
+        },
+        characteristics: None,
+    };
+
+    assert_eq!(pg().verified_stmt(sql), expected);
+}
+
+#[test]
+fn parse_create_after_update_trigger_with_condition() {
+    let sql = "CREATE TRIGGER check_update AFTER UPDATE ON accounts FOR EACH ROW WHEN (NEW.balance > 10000) EXECUTE FUNCTION check_account_update";
+    let expected = Statement::CreateTrigger {
+        or_replace: false,
+        is_constraint: false,
+        name: ObjectName(vec![Ident::new("check_update")]),
+        period: TriggerPeriod::After,
+        events: vec![TriggerEvent::Update(vec![])],
+        table_name: ObjectName(vec![Ident::new("accounts")]),
+        referenced_table_name: None,
+        referencing: vec![],
+        trigger_object: TriggerObject::Row,
+        include_each: true,
+        condition: Some(Expr::Nested(Box::new(Expr::BinaryOp {
+            left: Box::new(Expr::CompoundIdentifier(vec![
+                Ident::new("NEW"),
+                Ident::new("balance"),
+            ])),
+            op: BinaryOperator::Gt,
+            right: Box::new(Expr::Value(number("10000"))),
+        }))),
+        exec_body: TriggerExecBody {
+            exec_type: TriggerExecBodyType::Function,
+            func_desc: FunctionDesc {
+                name: ObjectName(vec![Ident::new("check_account_update")]),
+                args: None,
+            },
+        },
+        characteristics: None,
+    };
+
+    assert_eq!(pg().verified_stmt(sql), expected);
+}
+
+#[test]
+fn parse_create_instead_of_delete_trigger() {
+    let sql = "CREATE TRIGGER check_delete INSTEAD OF DELETE ON accounts FOR EACH ROW EXECUTE FUNCTION check_account_deletes";
+    let expected = Statement::CreateTrigger {
+        or_replace: false,
+        is_constraint: false,
+        name: ObjectName(vec![Ident::new("check_delete")]),
+        period: TriggerPeriod::InsteadOf,
+        events: vec![TriggerEvent::Delete],
+        table_name: ObjectName(vec![Ident::new("accounts")]),
+        referenced_table_name: None,
+        referencing: vec![],
+        trigger_object: TriggerObject::Row,
+        include_each: true,
+        condition: None,
+        exec_body: TriggerExecBody {
+            exec_type: TriggerExecBodyType::Function,
+            func_desc: FunctionDesc {
+                name: ObjectName(vec![Ident::new("check_account_deletes")]),
+                args: None,
+            },
+        },
+        characteristics: None,
+    };
+
+    assert_eq!(pg().verified_stmt(sql), expected);
+}
+
+#[test]
+fn parse_create_trigger_with_multiple_events_and_deferrable() {
+    let sql = "CREATE CONSTRAINT TRIGGER check_multiple_events BEFORE INSERT OR UPDATE OR DELETE ON accounts DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION check_account_changes";
+    let expected = Statement::CreateTrigger {
+        or_replace: false,
+        is_constraint: true,
+        name: ObjectName(vec![Ident::new("check_multiple_events")]),
+        period: TriggerPeriod::Before,
+        events: vec![
+            TriggerEvent::Insert,
+            TriggerEvent::Update(vec![]),
+            TriggerEvent::Delete,
+        ],
+        table_name: ObjectName(vec![Ident::new("accounts")]),
+        referenced_table_name: None,
+        referencing: vec![],
+        trigger_object: TriggerObject::Row,
+        include_each: true,
+        condition: None,
+        exec_body: TriggerExecBody {
+            exec_type: TriggerExecBodyType::Function,
+            func_desc: FunctionDesc {
+                name: ObjectName(vec![Ident::new("check_account_changes")]),
+                args: None,
+            },
+        },
+        characteristics: Some(ConstraintCharacteristics {
+            deferrable: Some(true),
+            initially: Some(DeferrableInitial::Deferred),
+            enforced: None,
+        }),
+    };
+
+    assert_eq!(pg().verified_stmt(sql), expected);
+}
+
+#[test]
+fn parse_create_trigger_with_referencing() {
+    let sql = "CREATE TRIGGER check_referencing BEFORE INSERT ON accounts REFERENCING NEW TABLE AS new_accounts OLD TABLE AS old_accounts FOR EACH ROW EXECUTE FUNCTION check_account_referencing";
+    let expected = Statement::CreateTrigger {
+        or_replace: false,
+        is_constraint: false,
+        name: ObjectName(vec![Ident::new("check_referencing")]),
+        period: TriggerPeriod::Before,
+        events: vec![TriggerEvent::Insert],
+        table_name: ObjectName(vec![Ident::new("accounts")]),
+        referenced_table_name: None,
+        referencing: vec![
+            TriggerReferencing {
+                refer_type: TriggerReferencingType::NewTable,
+                is_as: true,
+                transition_relation_name: ObjectName(vec![Ident::new("new_accounts")]),
+            },
+            TriggerReferencing {
+                refer_type: TriggerReferencingType::OldTable,
+                is_as: true,
+                transition_relation_name: ObjectName(vec![Ident::new("old_accounts")]),
+            },
+        ],
+        trigger_object: TriggerObject::Row,
+        include_each: true,
+        condition: None,
+        exec_body: TriggerExecBody {
+            exec_type: TriggerExecBodyType::Function,
+            func_desc: FunctionDesc {
+                name: ObjectName(vec![Ident::new("check_account_referencing")]),
+                args: None,
+            },
+        },
+        characteristics: None,
+    };
+
+    assert_eq!(pg().verified_stmt(sql), expected);
+}
+
+#[test]
+/// While in the parse_create_trigger test we test the full syntax of the CREATE TRIGGER statement,
+/// here we test the invalid cases of the CREATE TRIGGER statement which should cause an appropriate
+/// error to be returned.
+fn parse_create_trigger_invalid_cases() {
+    // Test invalid cases for the CREATE TRIGGER statement
+    let invalid_cases = vec![
+        (
+            "CREATE TRIGGER check_update BEFORE UPDATE ON accounts FUNCTION check_account_update",
+            "Expected: FOR, found: FUNCTION"
+        ),
+        (
+            "CREATE TRIGGER check_update TOMORROW UPDATE ON accounts EXECUTE FUNCTION check_account_update",
+            "Expected: one of BEFORE or AFTER or INSTEAD, found: TOMORROW"
+        ),
+        (
+            "CREATE TRIGGER check_update BEFORE SAVE ON accounts EXECUTE FUNCTION check_account_update",
+            "Expected: one of INSERT or UPDATE or DELETE or TRUNCATE, found: SAVE"
+        )
+    ];
+
+    for (sql, expected_error) in invalid_cases {
+        let res = pg().parse_sql_statements(sql);
+        assert_eq!(
+            format!("sql parser error: {expected_error}"),
+            res.unwrap_err().to_string()
+        );
+    }
+}
+
+#[test]
+fn parse_drop_trigger() {
+    for if_exists in [true, false] {
+        for option in [
+            None,
+            Some(ReferentialAction::Cascade),
+            Some(ReferentialAction::Restrict),
+        ] {
+            let sql = &format!(
+                "DROP TRIGGER{} check_update ON table_name{}",
+                if if_exists { " IF EXISTS" } else { "" },
+                option
+                    .map(|o| format!(" {}", o))
+                    .unwrap_or_else(|| "".to_string())
+            );
+            assert_eq!(
+                pg().verified_stmt(sql),
+                Statement::DropTrigger {
+                    if_exists,
+                    trigger_name: ObjectName(vec![Ident::new("check_update")]),
+                    table_name: ObjectName(vec![Ident::new("table_name")]),
+                    option
+                }
+            );
+        }
+    }
+}
+
+#[test]
+fn parse_drop_trigger_invalid_cases() {
+    // Test invalid cases for the DROP TRIGGER statement
+    let invalid_cases = vec![
+        (
+            "DROP TRIGGER check_update ON table_name CASCADE RESTRICT",
+            "Expected: end of statement, found: RESTRICT",
+        ),
+        (
+            "DROP TRIGGER check_update ON table_name CASCADE CASCADE",
+            "Expected: end of statement, found: CASCADE",
+        ),
+        (
+            "DROP TRIGGER check_update ON table_name CASCADE CASCADE CASCADE",
+            "Expected: end of statement, found: CASCADE",
+        ),
+    ];
+
+    for (sql, expected_error) in invalid_cases {
+        let res = pg().parse_sql_statements(sql);
+        assert_eq!(
+            format!("sql parser error: {expected_error}"),
+            res.unwrap_err().to_string()
+        );
+    }
+}
+
+#[test]
+fn parse_trigger_related_functions() {
+    // First we define all parts of the trigger definition,
+    // including the table creation, the function creation, the trigger creation and the trigger drop.
+    // The following example is taken from the PostgreSQL documentation <https://www.postgresql.org/docs/current/plpgsql-trigger.html>
+
+    let sql_table_creation = r#"
+    CREATE TABLE emp (
+        empname           text,
+        salary            integer,
+        last_date         timestamp,
+        last_user         text
+    );
+    "#;
+
+    let sql_create_function = r#"
+    CREATE FUNCTION emp_stamp() RETURNS trigger AS $emp_stamp$
+        BEGIN
+            -- Check that empname and salary are given
+            IF NEW.empname IS NULL THEN
+                RAISE EXCEPTION 'empname cannot be null';
+            END IF;
+            IF NEW.salary IS NULL THEN
+                RAISE EXCEPTION '% cannot have null salary', NEW.empname;
+            END IF;
+
+            -- Who works for us when they must pay for it?
+            IF NEW.salary < 0 THEN
+                RAISE EXCEPTION '% cannot have a negative salary', NEW.empname;
+            END IF;
+
+            -- Remember who changed the payroll when
+            NEW.last_date := current_timestamp;
+            NEW.last_user := current_user;
+            RETURN NEW;
+        END;
+    $emp_stamp$ LANGUAGE plpgsql;
+    "#;
+
+    let sql_create_trigger = r#"
+    CREATE TRIGGER emp_stamp BEFORE INSERT OR UPDATE ON emp
+        FOR EACH ROW EXECUTE FUNCTION emp_stamp();
+    "#;
+
+    let sql_drop_trigger = r#"
+    DROP TRIGGER emp_stamp ON emp;
+    "#;
+
+    // Now we parse the statements and check if they are parsed correctly.
+    let mut statements = pg()
+        .parse_sql_statements(&format!(
+            "{}{}{}{}",
+            sql_table_creation, sql_create_function, sql_create_trigger, sql_drop_trigger
+        ))
+        .unwrap();
+
+    assert_eq!(statements.len(), 4);
+    let drop_trigger = statements.pop().unwrap();
+    let create_trigger = statements.pop().unwrap();
+    let create_function = statements.pop().unwrap();
+    let create_table = statements.pop().unwrap();
+
+    // Check the first statement
+    let create_table = match create_table {
+        Statement::CreateTable(create_table) => create_table,
+        _ => panic!("Expected CreateTable statement"),
+    };
+
+    assert_eq!(
+        create_table,
+        CreateTable {
+            or_replace: false,
+            temporary: false,
+            external: false,
+            global: None,
+            if_not_exists: false,
+            transient: false,
+            volatile: false,
+            name: ObjectName(vec![Ident::new("emp")]),
+            columns: vec![
+                ColumnDef {
+                    name: "empname".into(),
+                    data_type: DataType::Text,
+                    collation: None,
+                    options: vec![],
+                },
+                ColumnDef {
+                    name: "salary".into(),
+                    data_type: DataType::Integer(None),
+                    collation: None,
+                    options: vec![],
+                },
+                ColumnDef {
+                    name: "last_date".into(),
+                    data_type: DataType::Timestamp(None, TimezoneInfo::None),
+                    collation: None,
+                    options: vec![],
+                },
+                ColumnDef {
+                    name: "last_user".into(),
+                    data_type: DataType::Text,
+                    collation: None,
+                    options: vec![],
+                },
+            ],
+            constraints: vec![],
+            hive_distribution: HiveDistributionStyle::NONE,
+            hive_formats: Some(HiveFormat {
+                row_format: None,
+                serde_properties: None,
+                storage: None,
+                location: None
+            }),
+            table_properties: vec![],
+            with_options: vec![],
+            file_format: None,
+            location: None,
+            query: None,
+            without_rowid: false,
+            like: None,
+            clone: None,
+            engine: None,
+            comment: None,
+            auto_increment_offset: None,
+            default_charset: None,
+            collation: None,
+            on_commit: None,
+            on_cluster: None,
+            primary_key: None,
+            order_by: None,
+            partition_by: None,
+            cluster_by: None,
+            clustered_by: None,
+            options: None,
+            strict: false,
+            copy_grants: false,
+            enable_schema_evolution: None,
+            change_tracking: None,
+            data_retention_time_in_days: None,
+            max_data_extension_time_in_days: None,
+            default_ddl_collation: None,
+            with_aggregation_policy: None,
+            with_row_access_policy: None,
+            with_tags: None,
+        }
+    );
+
+    // Check the second statement
+
+    assert_eq!(
+        create_function,
+        Statement::CreateFunction {
+            or_replace: false,
+            temporary: false,
+            if_not_exists: false,
+            name: ObjectName(vec![Ident::new("emp_stamp")]),
+            args: None,
+            return_type: Some(DataType::Trigger),
+            function_body: Some(
+                CreateFunctionBody::AsBeforeOptions(
+                    Expr::Value(
+                        Value::DollarQuotedString(
+                            DollarQuotedString {
+                                value: "\n        BEGIN\n            -- Check that empname and salary are given\n            IF NEW.empname IS NULL THEN\n                RAISE EXCEPTION 'empname cannot be null';\n            END IF;\n            IF NEW.salary IS NULL THEN\n                RAISE EXCEPTION '% cannot have null salary', NEW.empname;\n            END IF;\n\n            -- Who works for us when they must pay for it?\n            IF NEW.salary < 0 THEN\n                RAISE EXCEPTION '% cannot have a negative salary', NEW.empname;\n            END IF;\n\n            -- Remember who changed the payroll when\n            NEW.last_date := current_timestamp;\n            NEW.last_user := current_user;\n            RETURN NEW;\n        END;\n    ".to_owned(),
+                                tag: Some(
+                                    "emp_stamp".to_owned(),
+                                ),
+                            },
+                        ),
+                    ),
+                ),
+            ),
+            behavior: None,
+            called_on_null: None,
+            parallel: None,
+            using: None,
+            language: Some(Ident::new("plpgsql")),
+            determinism_specifier: None,
+            options: None,
+            remote_connection: None
+        }
+    );
+
+    // Check the third statement
+
+    assert_eq!(
+        create_trigger,
+        Statement::CreateTrigger {
+            or_replace: false,
+            is_constraint: false,
+            name: ObjectName(vec![Ident::new("emp_stamp")]),
+            period: TriggerPeriod::Before,
+            events: vec![TriggerEvent::Insert, TriggerEvent::Update(vec![])],
+            table_name: ObjectName(vec![Ident::new("emp")]),
+            referenced_table_name: None,
+            referencing: vec![],
+            trigger_object: TriggerObject::Row,
+            include_each: true,
+            condition: None,
+            exec_body: TriggerExecBody {
+                exec_type: TriggerExecBodyType::Function,
+                func_desc: FunctionDesc {
+                    name: ObjectName(vec![Ident::new("emp_stamp")]),
+                    args: None,
+                }
+            },
+            characteristics: None
+        }
+    );
+
+    // Check the fourth statement
+    assert_eq!(
+        drop_trigger,
+        Statement::DropTrigger {
+            if_exists: false,
+            trigger_name: ObjectName(vec![Ident::new("emp_stamp")]),
+            table_name: ObjectName(vec![Ident::new("emp")]),
+            option: None
+        }
+    );
+}
+
+#[test]
+fn test_unicode_string_literal() {
+    let pairs = [
+        // Example from the postgres docs
+        (r#"U&'\0441\043B\043E\043D'"#, "слон"),
+        // High unicode code point (> 0xFFFF)
+        (r#"U&'\+01F418'"#, "🐘"),
+        // Escaped backslash
+        (r#"U&'\\'"#, r#"\"#),
+        // Escaped single quote
+        (r#"U&''''"#, "'"),
+    ];
+    for (input, expected) in pairs {
+        match pg_and_generic().verified_expr(input) {
+            Expr::Value(Value::UnicodeStringLiteral(s)) => {
+                assert_eq!(expected, s);
+            }
+            _ => unreachable!(),
+        }
+    }
+}
+
+fn check_arrow_precedence(sql: &str, arrow_operator: BinaryOperator) {
+    assert_eq!(
+        pg().verified_expr(sql),
+        Expr::BinaryOp {
+            left: Box::new(Expr::BinaryOp {
+                left: Box::new(Expr::Identifier(Ident {
+                    value: "foo".to_string(),
+                    quote_style: None,
+                })),
+                op: arrow_operator,
+                right: Box::new(Expr::Value(Value::SingleQuotedString("bar".to_string()))),
+            }),
+            op: BinaryOperator::Eq,
+            right: Box::new(Expr::Value(Value::SingleQuotedString("spam".to_string()))),
+        }
+    )
+}
+
+#[test]
+fn arrow_precedence() {
+    check_arrow_precedence("foo -> 'bar' = 'spam'", BinaryOperator::Arrow);
+}
+
+#[test]
+fn long_arrow_precedence() {
+    check_arrow_precedence("foo ->> 'bar' = 'spam'", BinaryOperator::LongArrow);
+}
+
+#[test]
+fn arrow_cast_precedence() {
+    // check this matches postgres where you would need `(foo -> 'bar')::TEXT`
+    let stmt = pg().verified_expr("foo -> 'bar'::TEXT");
+    assert_eq!(
+        stmt,
+        Expr::BinaryOp {
+            left: Box::new(Expr::Identifier(Ident {
+                value: "foo".to_string(),
+                quote_style: None,
+            })),
+            op: BinaryOperator::Arrow,
+            right: Box::new(Expr::Cast {
+                kind: CastKind::DoubleColon,
+                expr: Box::new(Expr::Value(Value::SingleQuotedString("bar".to_string()))),
+                data_type: DataType::Text,
+                format: None,
+            }),
+        }
+    )
 }

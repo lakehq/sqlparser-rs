@@ -1,14 +1,19 @@
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// http://www.apache.org/licenses/LICENSE-2.0
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 
 #[macro_use]
 mod test_utils;
@@ -29,6 +34,130 @@ fn duckdb_and_generic() -> TestedDialects {
     TestedDialects {
         dialects: vec![Box::new(DuckDbDialect {}), Box::new(GenericDialect {})],
         options: None,
+    }
+}
+
+#[test]
+fn test_struct() {
+    // s STRUCT(v VARCHAR, i INTEGER)
+    let struct_type1 = DataType::Struct(
+        vec![
+            StructField {
+                field_name: Some(Ident::new("v")),
+                field_type: DataType::Varchar(None),
+                not_null: false,
+                comment: None,
+            },
+            StructField {
+                field_name: Some(Ident::new("i")),
+                field_type: DataType::Integer(None),
+                not_null: false,
+                comment: None,
+            },
+        ],
+        StructBracketKind::Parentheses,
+    );
+
+    // basic struct
+    let statement = duckdb().verified_stmt(r#"CREATE TABLE t1 (s STRUCT(v VARCHAR, i INTEGER))"#);
+    assert_eq!(
+        column_defs(statement),
+        vec![ColumnDef {
+            name: "s".into(),
+            data_type: struct_type1.clone(),
+            collation: None,
+            options: vec![],
+        }]
+    );
+
+    // struct array
+    let statement = duckdb().verified_stmt(r#"CREATE TABLE t1 (s STRUCT(v VARCHAR, i INTEGER)[])"#);
+    assert_eq!(
+        column_defs(statement),
+        vec![ColumnDef {
+            name: "s".into(),
+            data_type: DataType::Array(ArrayElemTypeDef::SquareBracket(
+                Box::new(struct_type1),
+                None
+            )),
+            collation: None,
+            options: vec![],
+        }]
+    );
+
+    // s STRUCT(v VARCHAR, s STRUCT(a1 INTEGER, a2 VARCHAR))
+    let struct_type2 = DataType::Struct(
+        vec![
+            StructField {
+                field_name: Some(Ident::new("v")),
+                field_type: DataType::Varchar(None),
+                not_null: false,
+                comment: None,
+            },
+            StructField {
+                field_name: Some(Ident::new("s")),
+                field_type: DataType::Struct(
+                    vec![
+                        StructField {
+                            field_name: Some(Ident::new("a1")),
+                            field_type: DataType::Integer(None),
+                            not_null: false,
+                            comment: None,
+                        },
+                        StructField {
+                            field_name: Some(Ident::new("a2")),
+                            field_type: DataType::Varchar(None),
+                            not_null: false,
+                            comment: None,
+                        },
+                    ],
+                    StructBracketKind::Parentheses,
+                ),
+                not_null: false,
+                comment: None,
+            },
+        ],
+        StructBracketKind::Parentheses,
+    );
+
+    // nested struct
+    let statement = duckdb().verified_stmt(
+        r#"CREATE TABLE t1 (s STRUCT(v VARCHAR, s STRUCT(a1 INTEGER, a2 VARCHAR))[])"#,
+    );
+
+    assert_eq!(
+        column_defs(statement),
+        vec![ColumnDef {
+            name: "s".into(),
+            data_type: DataType::Array(ArrayElemTypeDef::SquareBracket(
+                Box::new(struct_type2),
+                None
+            )),
+            collation: None,
+            options: vec![],
+        }]
+    );
+
+    // failing test (duckdb does not support bracket syntax)
+    let sql_list = vec![
+        r#"CREATE TABLE t1 (s STRUCT(v VARCHAR, i INTEGER)))"#,
+        r#"CREATE TABLE t1 (s STRUCT(v VARCHAR, i INTEGER>)"#,
+        r#"CREATE TABLE t1 (s STRUCT<v VARCHAR, i INTEGER>)"#,
+        r#"CREATE TABLE t1 (s STRUCT v VARCHAR, i INTEGER )"#,
+        r#"CREATE TABLE t1 (s STRUCT VARCHAR, i INTEGER )"#,
+        r#"CREATE TABLE t1 (s STRUCT (VARCHAR, INTEGER))"#,
+    ];
+
+    for sql in sql_list {
+        duckdb().parse_sql_statements(sql).unwrap_err();
+    }
+}
+
+/// Returns the ColumnDefinitions from a CreateTable statement
+fn column_defs(statement: Statement) -> Vec<ColumnDef> {
+    match statement {
+        Statement::CreateTable(CreateTable { columns, .. }) => columns,
+        _ => panic!("Expected CreateTable"),
     }
 }
 
@@ -166,12 +295,14 @@ fn test_select_union_by_name() {
                         with_hints: vec![],
                         version: None,
                         partitions: vec![],
+                        with_ordinality: false,
                     },
                     joins: vec![],
                 }],
                 lateral_views: vec![],
+                prewhere: None,
                 selection: None,
-                group_by: GroupByExpr::Expressions(vec![]),
+                group_by: GroupByExpr::Expressions(vec![], vec![]),
                 cluster_by: vec![],
                 distribute_by: vec![],
                 sort_by: vec![],
@@ -204,12 +335,14 @@ fn test_select_union_by_name() {
                         with_hints: vec![],
                         version: None,
                         partitions: vec![],
+                        with_ordinality: false,
                     },
                     joins: vec![],
                 }],
                 lateral_views: vec![],
+                prewhere: None,
                 selection: None,
-                group_by: GroupByExpr::Expressions(vec![]),
+                group_by: GroupByExpr::Expressions(vec![], vec![]),
                 cluster_by: vec![],
                 distribute_by: vec![],
                 sort_by: vec![],
@@ -625,6 +758,7 @@ fn test_duckdb_union_datatype() {
             order_by: Default::default(),
             partition_by: Default::default(),
             cluster_by: Default::default(),
+            clustered_by: Default::default(),
             options: Default::default(),
             strict: Default::default(),
             copy_grants: Default::default(),
@@ -638,5 +772,57 @@ fn test_duckdb_union_datatype() {
             with_tags: Default::default()
         }),
         stmt
+    );
+}
+
+#[test]
+fn parse_use() {
+    let valid_object_names = [
+        "mydb",
+        "SCHEMA",
+        "DATABASE",
+        "CATALOG",
+        "WAREHOUSE",
+        "DEFAULT",
+    ];
+    let quote_styles = ['"', '\''];
+
+    for object_name in &valid_object_names {
+        // Test single identifier without quotes
+        assert_eq!(
+            duckdb().verified_stmt(&format!("USE {}", object_name)),
+            Statement::Use(Use::Object(ObjectName(vec![Ident::new(
+                object_name.to_string()
+            )])))
+        );
+        for &quote in &quote_styles {
+            // Test single identifier with different type of quotes
+            assert_eq!(
+                duckdb().verified_stmt(&format!("USE {0}{1}{0}", quote, object_name)),
+                Statement::Use(Use::Object(ObjectName(vec![Ident::with_quote(
+                    quote,
+                    object_name.to_string(),
+                )])))
+            );
+        }
+    }
+
+    for &quote in &quote_styles {
+        // Test double identifier with different type of quotes
+        assert_eq!(
+            duckdb().verified_stmt(&format!("USE {0}CATALOG{0}.{0}my_schema{0}", quote)),
+            Statement::Use(Use::Object(ObjectName(vec![
+                Ident::with_quote(quote, "CATALOG"),
+                Ident::with_quote(quote, "my_schema")
+            ])))
+        );
+    }
+    // Test double identifier without quotes
+    assert_eq!(
+        duckdb().verified_stmt("USE mydb.my_schema"),
+        Statement::Use(Use::Object(ObjectName(vec![
+            Ident::new("mydb"),
+            Ident::new("my_schema")
+        ])))
     );
 }

@@ -1,14 +1,19 @@
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// http://www.apache.org/licenses/LICENSE-2.0
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 
 #![warn(clippy::all)]
 
@@ -16,12 +21,12 @@
 //! is also tested (on the inputs it can handle).
 
 use sqlparser::ast::{
-    CreateFunctionBody, CreateFunctionUsing, Expr, Function, FunctionArgumentList,
-    FunctionArguments, Ident, ObjectName, OneOrManyWithParens, SelectItem, Statement, TableFactor,
-    UnaryOperator, Value,
+    ClusteredBy, CommentDef, CreateFunctionBody, CreateFunctionUsing, CreateTable, Expr, Function,
+    FunctionArgumentList, FunctionArguments, Ident, ObjectName, OneOrManyWithParens, OrderByExpr,
+    SelectItem, Statement, TableFactor, UnaryOperator, Use, Value,
 };
 use sqlparser::dialect::{GenericDialect, HiveDialect, MsSqlDialect};
-use sqlparser::parser::{ParserError, ParserOptions};
+use sqlparser::parser::ParserError;
 use sqlparser::test_utils::*;
 
 #[test]
@@ -35,18 +40,11 @@ fn parse_table_create() {
     hive().verified_stmt(serdeproperties);
 }
 
-fn generic(options: Option<ParserOptions>) -> TestedDialects {
-    TestedDialects {
-        dialects: vec![Box::new(GenericDialect {})],
-        options,
-    }
-}
-
 #[test]
 fn parse_describe() {
-    let describe = r#"DESCRIBE namespace.`table`"#;
-    hive().verified_stmt(describe);
-    generic(None).verified_stmt(describe);
+    hive_and_generic().verified_stmt(r#"DESCRIBE namespace.`table`"#);
+    hive_and_generic().verified_stmt(r#"DESCRIBE namespace.table"#);
+    hive_and_generic().verified_stmt(r#"DESCRIBE table"#);
 }
 
 #[test]
@@ -120,6 +118,107 @@ fn drop_table_purge() {
 fn create_table_like() {
     let like = "CREATE TABLE db.table_name LIKE db.other_table";
     hive().verified_stmt(like);
+}
+
+#[test]
+fn create_table_with_comment() {
+    let sql = concat!(
+        "CREATE TABLE db.table_name (a INT, b STRING)",
+        " COMMENT 'table comment'",
+        " PARTITIONED BY (a INT, b STRING)",
+        " CLUSTERED BY (a, b) SORTED BY (a ASC, b DESC)",
+        " INTO 4 BUCKETS"
+    );
+    match hive().verified_stmt(sql) {
+        Statement::CreateTable(CreateTable { comment, .. }) => {
+            assert_eq!(
+                comment,
+                Some(CommentDef::AfterColumnDefsWithoutEq(
+                    "table comment".to_string()
+                ))
+            )
+        }
+        _ => unreachable!(),
+    }
+
+    // negative test case
+    let invalid_sql = concat!(
+        "CREATE TABLE db.table_name (a INT, b STRING)",
+        " PARTITIONED BY (a INT, b STRING)",
+        " COMMENT 'table comment'",
+    );
+    assert_eq!(
+        hive().parse_sql_statements(invalid_sql).unwrap_err(),
+        ParserError::ParserError("Expected: end of statement, found: COMMENT".to_string())
+    );
+}
+
+#[test]
+fn create_table_with_clustered_by() {
+    let sql = concat!(
+        "CREATE TABLE db.table_name (a INT, b STRING)",
+        " PARTITIONED BY (a INT, b STRING)",
+        " CLUSTERED BY (a, b) SORTED BY (a ASC, b DESC)",
+        " INTO 4 BUCKETS"
+    );
+    match hive_and_generic().verified_stmt(sql) {
+        Statement::CreateTable(CreateTable { clustered_by, .. }) => {
+            assert_eq!(
+                clustered_by.unwrap(),
+                ClusteredBy {
+                    columns: vec![Ident::new("a"), Ident::new("b")],
+                    sorted_by: Some(vec![
+                        OrderByExpr {
+                            expr: Expr::Identifier(Ident::new("a")),
+                            asc: Some(true),
+                            nulls_first: None,
+                            with_fill: None,
+                        },
+                        OrderByExpr {
+                            expr: Expr::Identifier(Ident::new("b")),
+                            asc: Some(false),
+                            nulls_first: None,
+                            with_fill: None,
+                        },
+                    ]),
+                    num_buckets: Value::Number("4".parse().unwrap(), None),
+                }
+            )
+        }
+        _ => unreachable!(),
+    }
+
+    // SORTED BY is optional
+    hive_and_generic().verified_stmt("CREATE TABLE db.table_name (a INT, b STRING) PARTITIONED BY (a INT, b STRING) CLUSTERED BY (a, b) INTO 4 BUCKETS");
+
+    // missing INTO BUCKETS
+    assert_eq!(
+    hive_and_generic().parse_sql_statements(
+        "CREATE TABLE db.table_name (a INT, b STRING) PARTITIONED BY (a INT, b STRING) CLUSTERED BY (a, b)"
+    ).unwrap_err(),
+        ParserError::ParserError("Expected: INTO, found: EOF".to_string())
+   );
+    // missing CLUSTER BY columns
+    assert_eq!(
+     hive_and_generic().parse_sql_statements(
+          "CREATE TABLE db.table_name (a INT, b STRING) PARTITIONED BY (a INT, b STRING) CLUSTERED BY () INTO 4 BUCKETS"
+     ).unwrap_err(),
+          ParserError::ParserError("Expected: identifier, found: )".to_string())
+    );
+    // missing SORT BY columns
+    assert_eq!(
+     hive_and_generic().parse_sql_statements(
+          "CREATE TABLE db.table_name (a INT, b STRING) PARTITIONED BY (a INT, b STRING) CLUSTERED BY (a, b) SORTED BY INTO 4 BUCKETS"
+     ).unwrap_err(),
+          ParserError::ParserError("Expected: (, found: INTO".to_string())
+    );
+    // missing number BUCKETS
+    assert_eq!(
+     hive_and_generic().parse_sql_statements(
+          "CREATE TABLE db.table_name (a INT, b STRING) PARTITIONED BY (a INT, b STRING) CLUSTERED BY (a, b) SORTED BY (a ASC, b DESC) INTO"
+     ).unwrap_err(),
+          ParserError::ParserError("Expected: a value, found: EOF".to_string())
+    );
 }
 
 // Turning off this test until we can parse identifiers starting with numbers :(
@@ -359,6 +458,7 @@ fn parse_delimited_identifiers() {
             args,
             with_hints,
             version,
+            with_ordinality: _,
             partitions: _,
         } => {
             assert_eq!(vec![Ident::with_quote('"', "a table")], name.0);
@@ -407,9 +507,46 @@ fn parse_delimited_identifiers() {
     //TODO verified_stmt(r#"UPDATE foo SET "bar" = 5"#);
 }
 
+#[test]
+fn parse_use() {
+    let valid_object_names = ["mydb", "SCHEMA", "DATABASE", "CATALOG", "WAREHOUSE"];
+    let quote_styles = ['\'', '"', '`'];
+    for object_name in &valid_object_names {
+        // Test single identifier without quotes
+        assert_eq!(
+            hive().verified_stmt(&format!("USE {}", object_name)),
+            Statement::Use(Use::Object(ObjectName(vec![Ident::new(
+                object_name.to_string()
+            )])))
+        );
+        for &quote in &quote_styles {
+            // Test single identifier with different type of quotes
+            assert_eq!(
+                hive().verified_stmt(&format!("USE {}{}{}", quote, object_name, quote)),
+                Statement::Use(Use::Object(ObjectName(vec![Ident::with_quote(
+                    quote,
+                    object_name.to_string(),
+                )])))
+            );
+        }
+    }
+    // Test DEFAULT keyword that is special case in Hive
+    assert_eq!(
+        hive().verified_stmt("USE DEFAULT"),
+        Statement::Use(Use::Default)
+    );
+}
+
 fn hive() -> TestedDialects {
     TestedDialects {
         dialects: vec![Box::new(HiveDialect {})],
+        options: None,
+    }
+}
+
+fn hive_and_generic() -> TestedDialects {
+    TestedDialects {
+        dialects: vec![Box::new(HiveDialect {}), Box::new(GenericDialect {})],
         options: None,
     }
 }

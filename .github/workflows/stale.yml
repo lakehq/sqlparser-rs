@@ -15,26 +15,24 @@
 # specific language governing permissions and limitations
 # under the License.
 
-[package]
-name = "sqlparser_derive"
-description = "proc macro for sqlparser"
-version = "0.2.2"
-authors = ["sqlparser-rs authors"]
-homepage = "https://github.com/sqlparser-rs/sqlparser-rs"
-documentation = "https://docs.rs/sqlparser_derive/"
-keywords = ["ansi", "sql", "lexer", "parser"]
-repository = "https://github.com/sqlparser-rs/sqlparser-rs"
-license = "Apache-2.0"
-include = [
-    "src/**/*.rs",
-    "Cargo.toml",
-]
-edition = "2021"
+name: "Close stale PRs"
+on:
+  schedule:
+    - cron: "30 1 * * *"
 
-[lib]
-proc-macro = true
-
-[dependencies]
-syn = { version = "2.0", default-features = false, features = ["printing", "parsing", "derive", "proc-macro"] }
-proc-macro2 = "1.0"
-quote = "1.0"
+jobs:
+  close-stale-prs:
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+      pull-requests: write
+    steps:
+      - uses: actions/stale@v9
+        with:
+          stale-pr-message: "Thank you for your contribution. Unfortunately, this pull request is stale because it has been open 60 days with no activity. Please remove the stale label or comment or this will be closed in 7 days."
+          days-before-pr-stale: 60
+          days-before-pr-close: 7
+          # do not close stale issues
+          days-before-issue-stale: -1
+          days-before-issue-close: -1
+          repo-token: ${{ secrets.GITHUB_TOKEN }}

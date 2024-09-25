@@ -1,3 +1,22 @@
+<!---
+  Licensed to the Apache Software Foundation (ASF) under one
+  or more contributor license agreements.  See the NOTICE file
+  distributed with this work for additional information
+  regarding copyright ownership.  The ASF licenses this file
+  to you under the Apache License, Version 2.0 (the
+  "License"); you may not use this file except in compliance
+  with the License.  You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+  Unless required by applicable law or agreed to in writing,
+  software distributed under the License is distributed on an
+  "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+  KIND, either express or implied.  See the License for the
+  specific language governing permissions and limitations
+  under the License.
+-->
+
 # Changelog
 All notable changes to this project will be documented in this file.
 
@@ -10,6 +29,133 @@ changes that break via addition as "Added".
 ## [Unreleased]
 Check https://github.com/sqlparser-rs/sqlparser-rs/commits/main for undocumented changes.
 
+
+## [0.51.0] 2024-09-11
+As always, huge props to @iffyio @jmhain and @lovasoa for their help reviewing and merging PRs 🙏.
+Without them this project would not be possible.
+
+Reminder: we are in the final phases of moving sqlparser-rs into the Apache
+DataFusion project: https://github.com/sqlparser-rs/sqlparser-rs/issues/1294
+
+### Fixed
+* Fix Hive table comment should be after table column definitions (#1413) - Thanks @git-hulk
+* Fix stack overflow in `parse_subexpr` (#1410) - Thanks @eejbyfeldt
+* Fix `INTERVAL` parsing to support expressions and units via dialect (#1398) - Thanks @samuelcolvin
+* Fix identifiers starting with `$` should be regarded as a placeholder in SQLite (#1402) - Thanks @git-hulk
+
+### Added
+* Support for MSSQL table options (#1414) - Thanks @bombsimon
+* Test showing how negative constants are parsed (#1421) - Thanks @alamb
+* Support databricks dialect to dialect_from_str (#1416) - Thanks @milenkovicmalamb
+* Support `DROP|CLEAR|MATERIALIZE PROJECTION` syntax for ClickHouse (#1417) - Thanks @git-hulk
+* Support postgres `TRUNCATE` syntax (#1406) - Thanks @tobyhede
+* Support `CREATE INDEX` with clause (#1389) - Thanks @lewiszlw
+* Support parsing `CLUSTERED BY` clause for Hive (#1397) - Thanks @git-hulk
+* Support different `USE` statement syntaxes (#1387) - Thanks @kacpermuda
+* Support `ADD PROJECTION` syntax for ClickHouse (#1390) - Thanks @git-hulk
+
+### Changed
+* Implement common traits for OneOrManyWithParens (#1368) - Thanks @gstvg
+* Cleanup parse_statement (#1407) - Thanks @samuelcolvin
+* Allow `DateTimeField::Custom` with `EXTRACT` in Postgres (#1394) - Thanks @samuelcolvin
+
+
+## [0.50.0] 2024-08-15
+Again, huge props to @iffyio @jmhain and @lovasoa for their help reviewing and merging PRs 🙏.
+Without them this project would not be possible. 
+
+Reminder:  are in the process of moving sqlparser to governed as part of the Apache
+DataFusion project: https://github.com/sqlparser-rs/sqlparser-rs/issues/1294
+
+### Fixed
+* Clippy 1.80 warnings (#1357) - Thanks @lovasoa
+
+### Added
+* Support `STRUCT` and list of structs for DuckDB dialect (#1372) - Thanks @jayzhan211
+* Support custom lexical precedence in PostgreSQL dialect (#1379) - Thanks @samuelcolvin
+* Support `FREEZE|UNFREEZE PARTITION` syntax for ClickHouse (#1380) - Thanks @git-hulk
+* Support scale in `CEIL` and `FLOOR` functions (#1377) - Thanks @seve-martinez
+* Support `CREATE TRIGGER` and `DROP TRIGGER` statements (#1352) - Thanks @LucaCappelletti94
+* Support `EXTRACT` syntax for snowflake (#1374) - Thanks @seve-martinez
+* Support `ATTACH` / `DETACH PARTITION` for ClickHouse (#1362) - Thanks @git-hulk
+* Support Dialect level precedence, update Postgres Dialect to match Postgres (#1360) - Thanks @samuelcolvin
+* Support parsing empty map literal syntax for DuckDB and Generic dialects (#1361) - Thanks @goldmedal
+* Support `SETTINGS` clause for ClickHouse table-valued functions (#1358) - Thanks @Jesse-Bakker
+* Support `OPTIMIZE TABLE` statement for ClickHouse (#1359) - Thanks @git-hulk
+* Support `ON CLUSTER` in `ALTER TABLE` for ClickHouse (#1342) - Thanks @git-hulk
+* Support `GLOBAL` keyword before the join operator (#1353) - Thanks @git-hulk
+* Support postgres String Constants with Unicode Escapes (#1355) - Thanks @lovasoa
+* Support position with normal function call syntax for Snowflake  (#1341) - Thanks @jmhain
+* Support `TABLE` keyword in `DESC|DESCRIBE|EXPLAIN TABLE` statement (#1351) - Thanks @git-hulk
+
+### Changed
+* Only require `DESCRIBE TABLE` for Snowflake and ClickHouse dialect (#1386) - Thanks @ alamb
+* Rename (unreleased) `get_next_precedence_full` to `get_next_precedence_default` (#1378) - Thanks @samuelcolvin
+* Use local GitHub Action to replace setup-rust-action (#1371) - Thanks @git-hulk
+* Simplify arrow_cast tests (#1367) - Thanks @alamb
+* Update version of GitHub Actions (#1363) - Thanks @git-hulk
+* Make `Parser::maybe_parse` pub (#1364) - Thanks @Jesse-Bakker
+* Improve comments on 1Dialect` (#1366) - Thanks @alamb
+
+
+## [0.49.0] 2024-07-23
+As always, huge props to @iffyio @jmhain and @lovasoa for their help reviewing and merging PRs!
+
+We are in the process of moving sqlparser to governed as part of the Apache
+DataFusion project: https://github.com/sqlparser-rs/sqlparser-rs/issues/1294
+
+### Fixed
+* Fix quoted identifier regression edge-case with "from" in SELECT (#1346) - Thanks @alexander-beedie
+* Fix `AS` query clause should be after the create table options (#1339) - Thanks @git-hulk
+
+### Added
+
+* Support `MATERIALIZED`/`ALIAS`/`EPHERMERAL` default column options for ClickHouse (#1348) - Thanks @git-hulk
+* Support `()` as the `GROUP BY` nothing (#1347) - Thanks @git-hulk
+* Support Map literal syntax for DuckDB and Generic (#1344) - Thanks @goldmedal
+* Support subquery expression in `SET` expressions (#1343) - Thanks @iffyio
+* Support `WITH FILL` for ClickHouse (#1330) - Thanks @nickpresta
+* Support `PARTITION BY` for PostgreSQL in `CREATE TABLE` statement (#1338) - Thanks @git-hulk
+* Support of table function `WITH ORDINALITY` modifier for Postgres  (#1337) - Thanks @git-hulk
+
+
+## [0.48.0] 2024-07-09
+
+Huge shout out to @iffyio @jmhain and @lovasoa for their help reviewing and merging PRs!
+
+### Fixed
+* Fix CI error message in CI (#1333) - Thanks @alamb
+* Fix typo in sqlparser-derive README (#1310) - Thanks @leoyvens
+* Re-enable trailing commas in DCL (#1318) - Thanks @MohamedAbdeen21
+* Fix a few typos in comment lines (#1316) - Thanks @git-hulk
+* Fix Snowflake `SELECT * wildcard REPLACE ... RENAME` order (#1321) - Thanks @alexander-beedie
+* Allow semi-colon at the end of UNCACHE statement (#1320) - Thanks @LorrensP-2158466
+* Return errors, not panic, when integers fail to parse in `AUTO_INCREMENT` and `TOP` (#1305) - Thanks @eejbyfeldt
+
+### Added
+* Support `OWNER TO` clause in Postgres (#1314) - Thanks @gainings
+* Support `FORMAT` clause for ClickHouse (#1335) - Thanks @git-hulk
+* Support `DROP PROCEDURE` statement (#1324) - Thanks @LorrensP-2158466
+* Support `PREWHERE` condition for ClickHouse dialect (#1328) - Thanks @git-hulk
+* Support `SETTINGS` pairs for ClickHouse dialect (#1327) - Thanks @git-hulk
+* Support `GROUP BY WITH MODIFIER` for ClickHouse dialect (#1323) - Thanks @git-hulk
+* Support DuckDB Union datatype (#1322) - Thanks @gstvg
+* Support parametric arguments to `FUNCTION` for ClickHouse dialect (#1315) - Thanks @git-hulk
+* Support `TO` in `CREATE VIEW` clause for Clickhouse (#1313) - Thanks @Bidaya0
+* Support `UPDATE` statements that contain tuple assignments (#1317) - Thanks @lovasoa
+* Support `BY NAME quantifier across all set ops (#1309) - Thanks @alexander-beedie
+* Support SnowFlake exclusive `CREATE TABLE` options (#1233) - Thanks @balliegojr
+* Support ClickHouse `CREATE TABLE` with primary key and parametrised table engine (#1289) - Thanks @7phs
+* Support custom operators in Postgres (#1302) - Thanks @lovasoa
+* Support ClickHouse data types (#1285) - Thanks @7phs
+
+### Changed
+* Add stale PR github workflow (#1331) - Thanks @alamb
+* Refine docs (#1326) - Thanks @emilsivervik
+* Improve error messages with additional colons (#1319) - Thanks @LorrensP-2158466
+* Move Display fmt to struct for `CreateIndex` (#1307) - Thanks @philipcristiano
+* Enhancing Trailing Comma Option (#1212) - Thanks @MohamedAbdeen21
+* Encapsulate `CreateTable`, `CreateIndex` into specific structs (#1291) - Thanks @philipcristiano
 
 ## [0.47.0] 2024-06-01
 

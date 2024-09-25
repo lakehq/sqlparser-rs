@@ -1,14 +1,19 @@
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// http://www.apache.org/licenses/LICENSE-2.0
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 
 #[cfg(not(feature = "std"))]
 use alloc::{boxed::Box, vec::Vec};
@@ -33,7 +38,7 @@ pub struct Query {
     /// SELECT or UNION / EXCEPT / INTERSECT
     pub body: Box<SetExpr>,
     /// ORDER BY
-    pub order_by: Vec<OrderByExpr>,
+    pub order_by: Option<OrderBy>,
     /// `LIMIT { <N> | ALL }`
     pub limit: Option<Expr>,
 
@@ -50,6 +55,15 @@ pub struct Query {
     /// `FOR JSON { AUTO | PATH } [ , INCLUDE_NULL_VALUES ]`
     /// (MSSQL-specific)
     pub for_clause: Option<ForClause>,
+    /// ClickHouse syntax: `SELECT * FROM t SETTINGS key1 = value1, key2 = value2`
+    ///
+    /// [ClickHouse](https://clickhouse.com/docs/en/sql-reference/statements/select#settings-in-select-query)
+    pub settings: Option<Vec<Setting>>,
+    /// `SELECT * FROM t FORMAT JSONCompact`
+    ///
+    /// [ClickHouse](https://clickhouse.com/docs/en/sql-reference/statements/select/format)
+    /// (ClickHouse-specific)
+    pub format_clause: Option<FormatClause>,
 }
 
 impl fmt::Display for Query {
@@ -58,8 +72,8 @@ impl fmt::Display for Query {
             write!(f, "{with} ")?;
         }
         write!(f, "{}", self.body)?;
-        if !self.order_by.is_empty() {
-            write!(f, " ORDER BY {}", display_comma_separated(&self.order_by))?;
+        if let Some(ref order_by) = self.order_by {
+            write!(f, " {order_by}")?;
         }
         if let Some(ref limit) = self.limit {
             write!(f, " LIMIT {limit}")?;
@@ -70,6 +84,9 @@ impl fmt::Display for Query {
         if !self.limit_by.is_empty() {
             write!(f, " BY {}", display_separated(&self.limit_by, ", "))?;
         }
+        if let Some(ref settings) = self.settings {
+            write!(f, " SETTINGS {}", display_comma_separated(settings))?;
+        }
         if let Some(ref fetch) = self.fetch {
             write!(f, " {fetch}")?;
         }
@@ -78,6 +95,36 @@ impl fmt::Display for Query {
         }
         if let Some(ref for_clause) = self.for_clause {
             write!(f, " {}", for_clause)?;
+        }
+        if let Some(ref format) = self.format_clause {
+            write!(f, " {}", format)?;
+        }
+        Ok(())
+    }
+}
+
+/// Query syntax for ClickHouse ADD PROJECTION statement.
+/// Its syntax is similar to SELECT statement, but it is used to add a new projection to a table.
+/// Syntax is `SELECT <COLUMN LIST EXPR> [GROUP BY] [ORDER BY]`
+///
+/// [ClickHouse](https://clickhouse.com/docs/en/sql-reference/statements/alter/projection#add-projection)
+#[derive(Debug, Clone, PartialEq, PartialOrd, Eq, Ord, Hash)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "visitor", derive(Visit, VisitMut))]
+pub struct ProjectionSelect {
+    pub projection: Vec<SelectItem>,
+    pub order_by: Option<OrderBy>,
+    pub group_by: Option<GroupByExpr>,
+}
+
+impl fmt::Display for ProjectionSelect {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "SELECT {}", display_comma_separated(&self.projection))?;
+        if let Some(ref group_by) = self.group_by {
+            write!(f, " {group_by}")?;
+        }
+        if let Some(ref order_by) = self.order_by {
+            write!(f, " {order_by}")?;
         }
         Ok(())
     }
@@ -240,6 +287,11 @@ pub struct Select {
     pub from: Vec<TableWithJoins>,
     /// LATERAL VIEWs
     pub lateral_views: Vec<LateralView>,
+    /// ClickHouse syntax: `PREWHERE a = 1 WHERE b = 2`,
+    /// and it can be used together with WHERE selection.
+    ///
+    /// [ClickHouse](https://clickhouse.com/docs/en/sql-reference/statements/select/prewhere)
+    pub prewhere: Option<Expr>,
     /// WHERE
     pub selection: Option<Expr>,
     /// GROUP BY
@@ -295,14 +347,17 @@ impl fmt::Display for Select {
                 write!(f, "{lv}")?;
             }
         }
+        if let Some(ref prewhere) = self.prewhere {
+            write!(f, " PREWHERE {prewhere}")?;
+        }
         if let Some(ref selection) = self.selection {
             write!(f, " WHERE {selection}")?;
         }
         match &self.group_by {
-            GroupByExpr::All => write!(f, " GROUP BY ALL")?,
-            GroupByExpr::Expressions(exprs) => {
+            GroupByExpr::All(_) => write!(f, " {}", self.group_by)?,
+            GroupByExpr::Expressions(exprs, _) => {
                 if !exprs.is_empty() {
-                    write!(f, " GROUP BY {}", display_comma_separated(exprs))?;
+                    write!(f, " {}", self.group_by)?
                 }
             }
         }
@@ -828,6 +883,20 @@ impl fmt::Display for ConnectBy {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, PartialOrd, Eq, Ord, Hash)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "visitor", derive(Visit, VisitMut))]
+pub struct Setting {
+    pub key: Ident,
+    pub value: Value,
+}
+
+impl fmt::Display for Setting {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{} = {}", self.key, self.value)
+    }
+}
+
 /// An expression optionally followed by an alias.
 ///
 /// Example:
@@ -853,6 +922,19 @@ impl fmt::Display for ExprWithAlias {
     }
 }
 
+/// Arguments to a table-valued function
+#[derive(Debug, Clone, PartialEq, PartialOrd, Eq, Ord, Hash)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "visitor", derive(Visit, VisitMut))]
+pub struct TableFunctionArgs {
+    pub args: Vec<FunctionArg>,
+    /// ClickHouse-specific SETTINGS clause.
+    /// For example,
+    /// `SELECT * FROM executable('generate_random.py', TabSeparated, 'id UInt32, random String', SETTINGS send_chunk_header = false, pool_size = 16)`
+    /// [`executable` table function](https://clickhouse.com/docs/en/engines/table-functions/executable)
+    pub settings: Option<Vec<Setting>>,
+}
+
 /// A table name or a parenthesized subquery with an optional alias
 #[derive(Debug, Clone, PartialEq, PartialOrd, Eq, Ord, Hash)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
@@ -870,12 +952,16 @@ pub enum TableFactor {
         /// This field's value is `Some(v)`, where `v` is a (possibly empty)
         /// vector of arguments, in the case of a table-valued function call,
         /// whereas it's `None` in the case of a regular table name.
-        args: Option<Vec<FunctionArg>>,
+        args: Option<TableFunctionArgs>,
         /// MSSQL-specific `WITH (...)` hints such as NOLOCK.
         with_hints: Vec<Expr>,
         /// Optional version qualifier to facilitate table time-travel, as
         /// supported by BigQuery and MSSQL.
         version: Option<TableVersion>,
+        //  Optional table function modifier to generate the ordinality for column.
+        /// For example, `SELECT * FROM generate_series(1, 10) WITH ORDINALITY AS t(a, b);`
+        /// [WITH ORDINALITY](https://www.postgresql.org/docs/current/functions-srf.html), supported by Postgres.
+        with_ordinality: bool,
         /// [Partition selection](https://dev.mysql.com/doc/refman/8.0/en/partitioning-selection.html), supported by MySQL.
         partitions: Vec<Ident>,
     },
@@ -911,6 +997,7 @@ pub enum TableFactor {
         array_exprs: Vec<Expr>,
         with_offset: bool,
         with_offset_alias: Option<Ident>,
+        with_ordinality: bool,
     },
     /// The `JSON_TABLE` table-valued function.
     /// Part of the SQL standard, but implemented only by MySQL, Oracle, and DB2.
@@ -1256,13 +1343,25 @@ impl fmt::Display for TableFactor {
                 with_hints,
                 version,
                 partitions,
+                with_ordinality,
             } => {
                 write!(f, "{name}")?;
                 if !partitions.is_empty() {
                     write!(f, "PARTITION ({})", display_comma_separated(partitions))?;
                 }
                 if let Some(args) = args {
-                    write!(f, "({})", display_comma_separated(args))?;
+                    write!(f, "(")?;
+                    write!(f, "{}", display_comma_separated(&args.args))?;
+                    if let Some(ref settings) = args.settings {
+                        if !args.args.is_empty() {
+                            write!(f, ", ")?;
+                        }
+                        write!(f, "SETTINGS {}", display_comma_separated(settings))?;
+                    }
+                    write!(f, ")")?;
+                }
+                if *with_ordinality {
+                    write!(f, " WITH ORDINALITY")?;
                 }
                 if let Some(alias) = alias {
                     write!(f, " AS {alias}")?;
@@ -1317,8 +1416,13 @@ impl fmt::Display for TableFactor {
                 array_exprs,
                 with_offset,
                 with_offset_alias,
+                with_ordinality,
             } => {
                 write!(f, "UNNEST({})", display_comma_separated(array_exprs))?;
+
+                if *with_ordinality {
+                    write!(f, " WITH ORDINALITY")?;
+                }
 
                 if let Some(alias) = alias {
                     write!(f, " AS {alias}")?;
@@ -1477,6 +1581,9 @@ impl Display for TableVersion {
 #[cfg_attr(feature = "visitor", derive(Visit, VisitMut))]
 pub struct Join {
     pub relation: TableFactor,
+    /// ClickHouse supports the optional `GLOBAL` keyword before the join operator.
+    /// See [ClickHouse](https://clickhouse.com/docs/en/sql-reference/statements/select/join)
+    pub global: bool,
     pub join_operator: JoinOperator,
 }
 
@@ -1503,6 +1610,10 @@ impl fmt::Display for Join {
             }
             Suffix(constraint)
         }
+        if self.global {
+            write!(f, " GLOBAL")?;
+        }
+
         match &self.join_operator {
             JoinOperator::Inner(constraint) => write!(
                 f,
@@ -1617,6 +1728,34 @@ pub enum JoinConstraint {
     None,
 }
 
+#[derive(Debug, Clone, PartialEq, PartialOrd, Eq, Ord, Hash)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "visitor", derive(Visit, VisitMut))]
+pub struct OrderBy {
+    pub exprs: Vec<OrderByExpr>,
+    /// Optional: `INTERPOLATE`
+    /// Supported by [ClickHouse syntax]
+    ///
+    /// [ClickHouse syntax]: <https://clickhouse.com/docs/en/sql-reference/statements/select/order-by#order-by-expr-with-fill-modifier>
+    pub interpolate: Option<Interpolate>,
+}
+
+impl fmt::Display for OrderBy {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "ORDER BY")?;
+        if !self.exprs.is_empty() {
+            write!(f, " {}", display_comma_separated(&self.exprs))?;
+        }
+        if let Some(ref interpolate) = self.interpolate {
+            match &interpolate.exprs {
+                Some(exprs) => write!(f, " INTERPOLATE ({})", display_comma_separated(exprs))?,
+                None => write!(f, " INTERPOLATE")?,
+            }
+        }
+        Ok(())
+    }
+}
+
 /// An `ORDER BY` expression
 #[derive(Debug, Clone, PartialEq, PartialOrd, Eq, Ord, Hash)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
@@ -1627,6 +1766,9 @@ pub struct OrderByExpr {
     pub asc: Option<bool>,
     /// Optional `NULLS FIRST` or `NULLS LAST`
     pub nulls_first: Option<bool>,
+    /// Optional: `WITH FILL`
+    /// Supported by [ClickHouse syntax]: <https://clickhouse.com/docs/en/sql-reference/statements/select/order-by#order-by-expr-with-fill-modifier>
+    pub with_fill: Option<WithFill>,
 }
 
 impl fmt::Display for OrderByExpr {
@@ -1641,6 +1783,67 @@ impl fmt::Display for OrderByExpr {
             Some(true) => write!(f, " NULLS FIRST")?,
             Some(false) => write!(f, " NULLS LAST")?,
             None => (),
+        }
+        if let Some(ref with_fill) = self.with_fill {
+            write!(f, " {}", with_fill)?
+        }
+        Ok(())
+    }
+}
+
+/// ClickHouse `WITH FILL` modifier for `ORDER BY` clause.
+/// Supported by [ClickHouse syntax]
+///
+/// [ClickHouse syntax]: <https://clickhouse.com/docs/en/sql-reference/statements/select/order-by#order-by-expr-with-fill-modifier>
+#[derive(Debug, Clone, PartialEq, PartialOrd, Eq, Ord, Hash)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "visitor", derive(Visit, VisitMut))]
+pub struct WithFill {
+    pub from: Option<Expr>,
+    pub to: Option<Expr>,
+    pub step: Option<Expr>,
+}
+
+impl fmt::Display for WithFill {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "WITH FILL")?;
+        if let Some(ref from) = self.from {
+            write!(f, " FROM {}", from)?;
+        }
+        if let Some(ref to) = self.to {
+            write!(f, " TO {}", to)?;
+        }
+        if let Some(ref step) = self.step {
+            write!(f, " STEP {}", step)?;
+        }
+        Ok(())
+    }
+}
+
+/// ClickHouse `INTERPOLATE` clause for use in `ORDER BY` clause when using `WITH FILL` modifier.
+/// Supported by [ClickHouse syntax]
+///
+/// [ClickHouse syntax]: <https://clickhouse.com/docs/en/sql-reference/statements/select/order-by#order-by-expr-with-fill-modifier>
+#[derive(Debug, Clone, PartialEq, PartialOrd, Eq, Ord, Hash)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "visitor", derive(Visit, VisitMut))]
+pub struct InterpolateExpr {
+    pub column: Ident,
+    pub expr: Option<Expr>,
+}
+
+#[derive(Debug, Clone, PartialEq, PartialOrd, Eq, Ord, Hash)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "visitor", derive(Visit, VisitMut))]
+pub struct Interpolate {
+    pub exprs: Option<Vec<InterpolateExpr>>,
+}
+
+impl fmt::Display for InterpolateExpr {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{}", self.column)?;
+        if let Some(ref expr) = self.expr {
+            write!(f, " AS {}", expr)?;
         }
         Ok(())
     }
@@ -1866,28 +2069,86 @@ impl fmt::Display for SelectInto {
     }
 }
 
+/// ClickHouse supports GROUP BY WITH modifiers(includes ROLLUP|CUBE|TOTALS).
+/// e.g. GROUP BY year WITH ROLLUP WITH TOTALS
+///
+/// [ClickHouse]: <https://clickhouse.com/docs/en/sql-reference/statements/select/group-by#rollup-modifier>
+#[derive(Debug, Copy, Clone, PartialEq, PartialOrd, Eq, Ord, Hash)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "visitor", derive(Visit, VisitMut))]
+pub enum GroupByWithModifier {
+    Rollup,
+    Cube,
+    Totals,
+}
+
+impl fmt::Display for GroupByWithModifier {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            GroupByWithModifier::Rollup => write!(f, "WITH ROLLUP"),
+            GroupByWithModifier::Cube => write!(f, "WITH CUBE"),
+            GroupByWithModifier::Totals => write!(f, "WITH TOTALS"),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, PartialOrd, Eq, Ord, Hash)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 #[cfg_attr(feature = "visitor", derive(Visit, VisitMut))]
 pub enum GroupByExpr {
-    /// ALL syntax of [Snowflake], and [DuckDB]
+    /// ALL syntax of [Snowflake], [DuckDB] and [ClickHouse].
     ///
     /// [Snowflake]: <https://docs.snowflake.com/en/sql-reference/constructs/group-by#label-group-by-all-columns>
     /// [DuckDB]:  <https://duckdb.org/docs/sql/query_syntax/groupby.html>
-    All,
+    /// [ClickHouse]: <https://clickhouse.com/docs/en/sql-reference/statements/select/group-by#group-by-all>
+    ///
+    /// ClickHouse also supports WITH modifiers after GROUP BY ALL and expressions.
+    ///
+    /// [ClickHouse]: <https://clickhouse.com/docs/en/sql-reference/statements/select/group-by#rollup-modifier>
+    All(Vec<GroupByWithModifier>),
 
     /// Expressions
-    Expressions(Vec<Expr>),
+    Expressions(Vec<Expr>, Vec<GroupByWithModifier>),
 }
 
 impl fmt::Display for GroupByExpr {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
-            GroupByExpr::All => write!(f, "GROUP BY ALL"),
-            GroupByExpr::Expressions(col_names) => {
-                let col_names = display_comma_separated(col_names);
-                write!(f, "GROUP BY ({col_names})")
+            GroupByExpr::All(modifiers) => {
+                write!(f, "GROUP BY ALL")?;
+                if !modifiers.is_empty() {
+                    write!(f, " {}", display_separated(modifiers, " "))?;
+                }
+                Ok(())
             }
+            GroupByExpr::Expressions(col_names, modifiers) => {
+                let col_names = display_comma_separated(col_names);
+                write!(f, "GROUP BY {col_names}")?;
+                if !modifiers.is_empty() {
+                    write!(f, " {}", display_separated(modifiers, " "))?;
+                }
+                Ok(())
+            }
+        }
+    }
+}
+
+/// FORMAT identifier or FORMAT NULL clause, specific to ClickHouse.
+///
+/// [ClickHouse]: <https://clickhouse.com/docs/en/sql-reference/statements/select/format>
+#[derive(Debug, Clone, PartialEq, PartialOrd, Eq, Ord, Hash)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "visitor", derive(Visit, VisitMut))]
+pub enum FormatClause {
+    Identifier(Ident),
+    Null,
+}
+
+impl fmt::Display for FormatClause {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            FormatClause::Identifier(ident) => write!(f, "FORMAT {}", ident),
+            FormatClause::Null => write!(f, "FORMAT NULL"),
         }
     }
 }

@@ -1,14 +1,19 @@
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// http://www.apache.org/licenses/LICENSE-2.0
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 
 #![warn(clippy::all)]
 //! Test SQL syntax specific to SQLite. The parser based on the
@@ -20,6 +25,7 @@ mod test_utils;
 use test_utils::*;
 
 use sqlparser::ast::SelectItem::UnnamedExpr;
+use sqlparser::ast::Value::Placeholder;
 use sqlparser::ast::*;
 use sqlparser::dialect::{GenericDialect, SQLiteDialect};
 use sqlparser::parser::{ParserError, ParserOptions};
@@ -399,7 +405,8 @@ fn parse_update_tuple_row_values() {
                     args: None,
                     with_hints: vec![],
                     version: None,
-                    partitions: vec![]
+                    partitions: vec![],
+                    with_ordinality: false,
                 },
                 joins: vec![],
             },
@@ -430,7 +437,7 @@ fn invalid_empty_list() {
     let sql = "SELECT * FROM t1 WHERE a IN (,,)";
     let sqlite = sqlite_with_options(ParserOptions::new().with_trailing_commas(true));
     assert_eq!(
-        "sql parser error: Expected: an expression:, found: ,",
+        "sql parser error: Expected: an expression, found: ,",
         sqlite.parse_sql_statements(sql).unwrap_err().to_string()
     );
 }
@@ -467,6 +474,22 @@ fn parse_start_transaction_with_modifier() {
         ParserError::ParserError("Expected: end of statement, found: EXCLUSIVE".to_string()),
         res.unwrap_err(),
     );
+}
+
+#[test]
+fn test_dollar_identifier_as_placeholder() {
+    // This relates to the discussion in issue #291. The `$id` should be treated as a placeholder,
+    // not as an identifier in SQLite dialect.
+    //
+    // Reference: https://www.sqlite.org/lang_expr.html#varparam
+    match sqlite().verified_expr("id = $id") {
+        Expr::BinaryOp { op, left, right } => {
+            assert_eq!(op, BinaryOperator::Eq);
+            assert_eq!(left, Box::new(Expr::Identifier(Ident::new("id"))));
+            assert_eq!(right, Box::new(Expr::Value(Placeholder("$id".to_string()))));
+        }
+        _ => unreachable!(),
+    }
 }
 
 fn sqlite() -> TestedDialects {

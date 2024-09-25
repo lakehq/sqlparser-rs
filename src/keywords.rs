@@ -1,14 +1,19 @@
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+// Licensed to the Apache Software Foundation (ASF) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
 //
-// http://www.apache.org/licenses/LICENSE-2.0
+//   http://www.apache.org/licenses/LICENSE-2.0
 //
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 
 //! This module defines
 //! 1) a list of constants for every keyword
@@ -20,7 +25,7 @@
 //!     As a matter of fact, most of these keywords are not used at all
 //!     and could be removed.
 //! 3) a `RESERVED_FOR_TABLE_ALIAS` array with keywords reserved in a
-//! "table alias" context.
+//!     "table alias" context.
 
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
@@ -77,6 +82,7 @@ define_keywords!(
     AFTER,
     AGAINST,
     AGGREGATION,
+    ALIAS,
     ALL,
     ALLOCATE,
     ALTER,
@@ -107,6 +113,7 @@ define_keywords!(
     AVRO,
     BACKWARD,
     BASE64,
+    BEFORE,
     BEGIN,
     BEGIN_FRAME,
     BEGIN_PARTITION,
@@ -123,6 +130,7 @@ define_keywords!(
     BOTH,
     BROWSE,
     BTREE,
+    BUCKETS,
     BY,
     BYPASSRLS,
     BYTEA,
@@ -135,6 +143,7 @@ define_keywords!(
     CASCADED,
     CASE,
     CAST,
+    CATALOG,
     CEIL,
     CEILING,
     CENTURY,
@@ -149,10 +158,12 @@ define_keywords!(
     CHARSET,
     CHAR_LENGTH,
     CHECK,
+    CLEAR,
     CLOB,
     CLONE,
     CLOSE,
     CLUSTER,
+    CLUSTERED,
     COALESCE,
     COLLATE,
     COLLATION,
@@ -160,6 +171,7 @@ define_keywords!(
     COLLECTION,
     COLUMN,
     COLUMNS,
+    COLUMNSTORE,
     COMMENT,
     COMMIT,
     COMMITTED,
@@ -172,6 +184,7 @@ define_keywords!(
     CONNECTION,
     CONSTRAINT,
     CONTAINS,
+    CONTINUE,
     CONVERT,
     COPY,
     COPY_OPTIONS,
@@ -218,6 +231,7 @@ define_keywords!(
     DECADE,
     DECIMAL,
     DECLARE,
+    DEDUPLICATE,
     DEFAULT,
     DEFAULT_DDL_COLLATION,
     DEFERRABLE,
@@ -268,6 +282,7 @@ define_keywords!(
     ENFORCED,
     ENGINE,
     ENUM,
+    EPHEMERAL,
     EPOCH,
     EQUALS,
     ERROR,
@@ -298,7 +313,9 @@ define_keywords!(
     FILE,
     FILES,
     FILE_FORMAT,
+    FILL,
     FILTER,
+    FINAL,
     FIRST,
     FIRST_VALUE,
     FIXEDSTRING,
@@ -345,6 +362,7 @@ define_keywords!(
     HASH,
     HAVING,
     HEADER,
+    HEAP,
     HIGH_PRIORITY,
     HISTORY,
     HIVEVAR,
@@ -352,6 +370,7 @@ define_keywords!(
     HOSTS,
     HOUR,
     HOURS,
+    ID,
     IDENTITY,
     IF,
     IGNORE,
@@ -373,6 +392,7 @@ define_keywords!(
     INSENSITIVE,
     INSERT,
     INSTALL,
+    INSTEAD,
     INT,
     INT128,
     INT16,
@@ -383,6 +403,7 @@ define_keywords!(
     INT64,
     INT8,
     INTEGER,
+    INTERPOLATE,
     INTERSECT,
     INTERSECTION,
     INTERVAL,
@@ -439,6 +460,7 @@ define_keywords!(
     MATCHES,
     MATCH_CONDITION,
     MATCH_RECOGNIZE,
+    MATERIALIZE,
     MATERIALIZED,
     MAX,
     MAXVALUE,
@@ -522,6 +544,7 @@ define_keywords!(
     OR,
     ORC,
     ORDER,
+    ORDINALITY,
     OUT,
     OUTER,
     OUTPUTFORMAT,
@@ -531,9 +554,11 @@ define_keywords!(
     OVERLAY,
     OVERWRITE,
     OWNED,
+    OWNER,
     PARALLEL,
     PARAMETER,
     PARQUET,
+    PART,
     PARTITION,
     PARTITIONED,
     PARTITIONS,
@@ -562,11 +587,13 @@ define_keywords!(
     PRECISION,
     PREPARE,
     PRESERVE,
+    PREWHERE,
     PRIMARY,
     PRIOR,
     PRIVILEGES,
     PROCEDURE,
     PROGRAM,
+    PROJECTION,
     PURGE,
     QUALIFY,
     QUARTER,
@@ -655,6 +682,7 @@ define_keywords!(
     SESSION_USER,
     SET,
     SETS,
+    SETTINGS,
     SHARE,
     SHOW,
     SIMILAR,
@@ -664,6 +692,7 @@ define_keywords!(
     SNAPSHOT,
     SOME,
     SORT,
+    SORTED,
     SOURCE,
     SPATIAL,
     SPECIFIC,
@@ -676,6 +705,7 @@ define_keywords!(
     STABLE,
     STAGE,
     START,
+    STATEMENT,
     STATIC,
     STATISTICS,
     STATUS,
@@ -683,6 +713,7 @@ define_keywords!(
     STDDEV_SAMP,
     STDIN,
     STDOUT,
+    STEP,
     STORAGE_INTEGRATION,
     STORED,
     STRICT,
@@ -728,6 +759,7 @@ define_keywords!(
     TINYINT,
     TO,
     TOP,
+    TOTALS,
     TRAILING,
     TRANSACTION,
     TRANSIENT,
@@ -753,6 +785,7 @@ define_keywords!(
     UNBOUNDED,
     UNCACHE,
     UNCOMMITTED,
+    UNFREEZE,
     UNION,
     UNIQUE,
     UNKNOWN,
@@ -793,6 +826,7 @@ define_keywords!(
     VIRTUAL,
     VOID,
     VOLATILE,
+    WAREHOUSE,
     WEEK,
     WEEKS,
     WHEN,
@@ -850,6 +884,7 @@ pub const RESERVED_FOR_TABLE_ALIAS: &[Keyword] = &[
     Keyword::USING,
     Keyword::CLUSTER,
     Keyword::DISTRIBUTE,
+    Keyword::GLOBAL,
     // for MSSQL-specific OUTER APPLY (seems reserved in most dialects)
     Keyword::OUTER,
     Keyword::SET,
@@ -859,6 +894,12 @@ pub const RESERVED_FOR_TABLE_ALIAS: &[Keyword] = &[
     Keyword::FOR,
     // for MYSQL PARTITION SELECTION
     Keyword::PARTITION,
+    // for Clickhouse PREWHERE
+    Keyword::PREWHERE,
+    // for ClickHouse SELECT * FROM t SETTINGS ...
+    Keyword::SETTINGS,
+    // for ClickHouse SELECT * FROM t FORMAT...
+    Keyword::FORMAT,
     // for Snowflake START WITH .. CONNECT BY
     Keyword::START,
     Keyword::CONNECT,

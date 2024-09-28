@@ -1,3 +1,9 @@
+# Patching SQL Parser for LakeSail
+
+1. Use `dev` as the base branch.
+2. If you’re making new changes, use squash commit.
+3. If you’re merging from upstream, use merge commit.
+
 # Extensible SQL Lexer and Parser for Rust
 
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)

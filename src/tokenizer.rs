@@ -748,7 +748,9 @@ impl<'a> Tokenizer<'a> {
                 // BigQuery uses b or B for byte string literal
                 b @ 'B' | b @ 'b' if dialect_of!(self is BigQueryDialect | GenericDialect) => {
                     chars.next(); // consume
-                    match chars.peeking_skip_whitespace_take_if(|ch| matches!(ch, '\'') || matches!(ch, '\"')) {
+                    match chars.peeking_skip_whitespace_take_if(|ch| {
+                        matches!(ch, '\'') || matches!(ch, '\"')
+                    }) {
                         Some('\'') => {
                             if self.dialect.supports_triple_quoted_string() {
                                 return self
@@ -787,7 +789,9 @@ impl<'a> Tokenizer<'a> {
                 // BigQuery uses r or R for raw string literal
                 b @ 'R' | b @ 'r' if dialect_of!(self is BigQueryDialect | GenericDialect) => {
                     chars.next(); // consume
-                    match chars.peeking_skip_whitespace_take_if(|ch| matches!(ch, '\'') || matches!(ch, '\"')) {
+                    match chars.peeking_skip_whitespace_take_if(|ch| {
+                        matches!(ch, '\'') || matches!(ch, '\"')
+                    }) {
                         Some('\'') => self
                             .tokenize_single_or_triple_quoted_string::<fn(String) -> Token>(
                                 chars,
@@ -814,7 +818,9 @@ impl<'a> Tokenizer<'a> {
                 // Redshift uses lower case n for national string literal
                 n @ 'N' | n @ 'n' => {
                     chars.next(); // consume, to check the next char
-                    match chars.peeking_skip_whitespace_take_if(|ch| matches!(ch, '\'') || matches!(ch, '\"')) {
+                    match chars.peeking_skip_whitespace_take_if(|ch| {
+                        matches!(ch, '\'') || matches!(ch, '\"')
+                    }) {
                         Some('\'') => {
                             // N'...' - a <national character string literal>
                             let s = self.tokenize_single_quoted_string(chars, '\'', true)?;
@@ -870,7 +876,9 @@ impl<'a> Tokenizer<'a> {
                 // string, but PostgreSQL, at least, allows a lowercase 'x' too.
                 x @ 'x' | x @ 'X' => {
                     chars.next(); // consume, to check the next char
-                    match chars.peeking_skip_whitespace_take_if(|ch| matches!(ch, '\'') || matches!(ch, '\"')) {
+                    match chars.peeking_skip_whitespace_take_if(|ch| {
+                        matches!(ch, '\'') || matches!(ch, '\"')
+                    }) {
                         Some('\'') => {
                             // X'...' - a <binary string literal>
                             let s = self.tokenize_single_quoted_string(chars, '\'', true)?;

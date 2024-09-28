@@ -525,6 +525,48 @@ impl<'a> State<'a> {
         self.peekable.peek()
     }
 
+    /// Peek ahead in a clone of `self.peekable`, skipping whitespace,
+    /// until `predicate` returns `true` or a non-whitespace character is encountered.
+    /// If a character matching the predicate is found:
+    ///   - Advance the original iterator by the number of whitespace characters skipped
+    ///   - Return the peeked character matching the predicate
+    /// If a non-whitespace character not matching the predicate is encountered, or EOF is reached,
+    /// return `self.peek()` without advancing the iterator.
+    /// Note: This function may advance the original iterator if a match is found after skipping whitespace.
+    pub fn peeking_skip_whitespace_take_if(
+        &mut self,
+        mut predicate: impl FnMut(char) -> bool,
+    ) -> Option<&char> {
+        // Check if the next character is a match to avoid unnecessary cloning.
+        match self.peek() {
+            Some(&ch) if predicate(ch) => {
+                return Some(&ch);
+            }
+            _ => {}
+        };
+
+        let mut chars_clone = self.peekable.clone();
+        let mut next_count = 0;
+        let peekaboo = loop {
+            match chars_clone.peek() {
+                Some(&ch) if predicate(ch) => {
+                    if next_count > 0 {
+                        for _ in 0..next_count {
+                            self.next();
+                        }
+                    }
+                    break Some(&ch);
+                }
+                Some(&ch) if ch.is_whitespace() || matches!(ch, ' ' | '\t' | '\n' | '\r') => {
+                    next_count += 1;
+                    chars_clone.next();
+                }
+                _ => break self.peek(),
+            }
+        };
+        peekaboo
+    }
+
     pub fn location(&self) -> Location {
         Location {
             line: self.line,
@@ -706,7 +748,7 @@ impl<'a> Tokenizer<'a> {
                 // BigQuery uses b or B for byte string literal
                 b @ 'B' | b @ 'b' if dialect_of!(self is BigQueryDialect | GenericDialect) => {
                     chars.next(); // consume
-                    match chars.peek() {
+                    match chars.peeking_skip_whitespace_take_if(|ch| matches!(ch, '\'') || matches!(ch, '\"')) {
                         Some('\'') => {
                             if self.dialect.supports_triple_quoted_string() {
                                 return self
@@ -745,7 +787,7 @@ impl<'a> Tokenizer<'a> {
                 // BigQuery uses r or R for raw string literal
                 b @ 'R' | b @ 'r' if dialect_of!(self is BigQueryDialect | GenericDialect) => {
                     chars.next(); // consume
-                    match chars.peek() {
+                    match chars.peeking_skip_whitespace_take_if(|ch| matches!(ch, '\'') || matches!(ch, '\"')) {
                         Some('\'') => self
                             .tokenize_single_or_triple_quoted_string::<fn(String) -> Token>(
                                 chars,
@@ -772,10 +814,15 @@ impl<'a> Tokenizer<'a> {
                 // Redshift uses lower case n for national string literal
                 n @ 'N' | n @ 'n' => {
                     chars.next(); // consume, to check the next char
-                    match chars.peek() {
+                    match chars.peeking_skip_whitespace_take_if(|ch| matches!(ch, '\'') || matches!(ch, '\"')) {
                         Some('\'') => {
                             // N'...' - a <national character string literal>
                             let s = self.tokenize_single_quoted_string(chars, '\'', true)?;
+                            Ok(Some(Token::NationalStringLiteral(s)))
+                        }
+                        Some('\"') => {
+                            // N"..." - a <national character string literal>
+                            let s = self.tokenize_single_quoted_string(chars, '\"', true)?;
                             Ok(Some(Token::NationalStringLiteral(s)))
                         }
                         _ => {
@@ -789,7 +836,7 @@ impl<'a> Tokenizer<'a> {
                 x @ 'e' | x @ 'E' => {
                     let starting_loc = chars.location();
                     chars.next(); // consume, to check the next char
-                    match chars.peek() {
+                    match chars.peeking_skip_whitespace_take_if(|ch| matches!(ch, '\'')) {
                         Some('\'') => {
                             let s =
                                 self.tokenize_escaped_single_quoted_string(starting_loc, chars)?;
@@ -823,10 +870,15 @@ impl<'a> Tokenizer<'a> {
                 // string, but PostgreSQL, at least, allows a lowercase 'x' too.
                 x @ 'x' | x @ 'X' => {
                     chars.next(); // consume, to check the next char
-                    match chars.peek() {
+                    match chars.peeking_skip_whitespace_take_if(|ch| matches!(ch, '\'') || matches!(ch, '\"')) {
                         Some('\'') => {
                             // X'...' - a <binary string literal>
                             let s = self.tokenize_single_quoted_string(chars, '\'', true)?;
+                            Ok(Some(Token::HexStringLiteral(s)))
+                        }
+                        Some('\"') => {
+                            // X"..." - a <binary string literal>
+                            let s = self.tokenize_single_quoted_string(chars, '\"', true)?;
                             Ok(Some(Token::HexStringLiteral(s)))
                         }
                         _ => {

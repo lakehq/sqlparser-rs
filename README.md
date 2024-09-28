@@ -3,6 +3,7 @@
 1. Use `dev` as the base branch.
 2. If you’re making new changes, use squash commit.
 3. If you’re merging from upstream, use merge commit.
+4. Avoid mixing new changes + upstream merge in a single PR.
 
 # Extensible SQL Lexer and Parser for Rust
 

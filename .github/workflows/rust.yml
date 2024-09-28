@@ -65,7 +65,7 @@ jobs:
       with:
         crate: cargo-tarpaulin
         version: 0.14.2
-        use-tool-cache: true
+        use-tool-cache: false
     - name: Test
       run: cargo test --all-features
 
@@ -83,7 +83,7 @@ jobs:
       with:
         crate: cargo-tarpaulin
         version: 0.14.2
-        use-tool-cache: true
+        use-tool-cache: false
     - name: Coverage
       run: cargo tarpaulin -o Lcov --output-dir ./coverage
     - name: Coveralls

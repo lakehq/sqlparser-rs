@@ -525,48 +525,6 @@ impl<'a> State<'a> {
         self.peekable.peek()
     }
 
-    /// Peek ahead in a clone of `self.peekable`, skipping whitespace,
-    /// until `predicate` returns `true` or a non-whitespace character is encountered.
-    /// If a character matching the predicate is found:
-    ///   - Advance the original iterator by the number of whitespace characters skipped
-    ///   - Return the peeked character matching the predicate
-    /// If a non-whitespace character not matching the predicate is encountered, or EOF is reached,
-    /// return `self.peek()` without advancing the iterator.
-    /// Note: This function may advance the original iterator if a match is found after skipping whitespace.
-    pub fn peeking_skip_whitespace_take_if(
-        &mut self,
-        mut predicate: impl FnMut(char) -> bool,
-    ) -> Option<&char> {
-        // Check if the next character is a match to avoid unnecessary cloning.
-        match self.peek() {
-            Some(&ch) if predicate(ch) => {
-                return Some(&ch);
-            }
-            _ => {}
-        };
-
-        let mut chars_clone = self.peekable.clone();
-        let mut next_count = 0;
-        let peekaboo = loop {
-            match chars_clone.peek() {
-                Some(&ch) if predicate(ch) => {
-                    if next_count > 0 {
-                        for _ in 0..next_count {
-                            self.next();
-                        }
-                    }
-                    break Some(&ch);
-                }
-                Some(&ch) if ch.is_whitespace() || matches!(ch, ' ' | '\t' | '\n' | '\r') => {
-                    next_count += 1;
-                    chars_clone.next();
-                }
-                _ => break self.peek(),
-            }
-        };
-        peekaboo
-    }
-
     pub fn location(&self) -> Location {
         Location {
             line: self.line,
@@ -748,7 +706,7 @@ impl<'a> Tokenizer<'a> {
                 // BigQuery uses b or B for byte string literal
                 b @ 'B' | b @ 'b' if dialect_of!(self is BigQueryDialect | GenericDialect) => {
                     chars.next(); // consume
-                    match chars.peeking_skip_whitespace_take_if(|ch| {
+                    match peeking_skip_whitespace_take_if(chars, |ch| {
                         matches!(ch, '\'') || matches!(ch, '\"')
                     }) {
                         Some('\'') => {
@@ -789,7 +747,7 @@ impl<'a> Tokenizer<'a> {
                 // BigQuery uses r or R for raw string literal
                 b @ 'R' | b @ 'r' if dialect_of!(self is BigQueryDialect | GenericDialect) => {
                     chars.next(); // consume
-                    match chars.peeking_skip_whitespace_take_if(|ch| {
+                    match peeking_skip_whitespace_take_if(chars, |ch| {
                         matches!(ch, '\'') || matches!(ch, '\"')
                     }) {
                         Some('\'') => self
@@ -818,7 +776,7 @@ impl<'a> Tokenizer<'a> {
                 // Redshift uses lower case n for national string literal
                 n @ 'N' | n @ 'n' => {
                     chars.next(); // consume, to check the next char
-                    match chars.peeking_skip_whitespace_take_if(|ch| {
+                    match peeking_skip_whitespace_take_if(chars, |ch| {
                         matches!(ch, '\'') || matches!(ch, '\"')
                     }) {
                         Some('\'') => {
@@ -842,7 +800,7 @@ impl<'a> Tokenizer<'a> {
                 x @ 'e' | x @ 'E' => {
                     let starting_loc = chars.location();
                     chars.next(); // consume, to check the next char
-                    match chars.peeking_skip_whitespace_take_if(|ch| matches!(ch, '\'')) {
+                    match peeking_skip_whitespace_take_if(chars, |ch| matches!(ch, '\'')) {
                         Some('\'') => {
                             let s =
                                 self.tokenize_escaped_single_quoted_string(starting_loc, chars)?;
@@ -876,7 +834,7 @@ impl<'a> Tokenizer<'a> {
                 // string, but PostgreSQL, at least, allows a lowercase 'x' too.
                 x @ 'x' | x @ 'X' => {
                     chars.next(); // consume, to check the next char
-                    match chars.peeking_skip_whitespace_take_if(|ch| {
+                    match peeking_skip_whitespace_take_if(chars, |ch| {
                         matches!(ch, '\'') || matches!(ch, '\"')
                     }) {
                         Some('\'') => {
@@ -1732,6 +1690,47 @@ fn peeking_take_while(chars: &mut State, mut predicate: impl FnMut(char) -> bool
         }
     }
     s
+}
+
+/// Peek ahead in a clone of `self.peekable`, skipping whitespace,
+/// until `predicate` returns `true` or a non-whitespace character is encountered.
+/// If a character matching the predicate is found:
+///   - Advance the original iterator by the number of whitespace characters skipped
+///   - Return the peeked character matching the predicate
+///
+/// If a non-whitespace character not matching the predicate is encountered, or EOF is reached,
+/// return `self.peek()` without advancing the iterator.
+///
+/// Note: This function may advance the original iterator if a match is found after skipping whitespace.
+fn peeking_skip_whitespace_take_if(
+    chars: &mut State,
+    mut predicate: impl FnMut(char) -> bool,
+) -> Option<char> {
+    // Check if the next character is a match to avoid unnecessary cloning.
+    if let Some(&ch) = chars.peek() {
+        if predicate(ch) {
+            return Some(ch);
+        }
+    }
+
+    let mut chars_clone = chars.peekable.clone();
+    let mut next_count = 0;
+    loop {
+        match chars_clone.peek() {
+            Some(&ch) if predicate(ch) => {
+                // Advance the original iterator
+                for _ in 0..next_count {
+                    chars.next();
+                }
+                return chars.peek().copied();
+            }
+            Some(ch) if ch.is_whitespace() || matches!(ch, ' ' | '\t' | '\n' | '\r') => {
+                next_count += 1;
+                chars_clone.next();
+            }
+            _ => return chars.peek().copied(),
+        }
+    }
 }
 
 fn unescape_single_quoted_string(chars: &mut State<'_>) -> Option<String> {

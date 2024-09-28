@@ -1,3 +1,11 @@
+# Patching SQL Parser for LakeSail
+
+1. Use `dev` as the base branch when creating PRs in the fork.
+2. Please confirm the base repository when creating PRs. You should manually choose `lakehq/sqlparser-rs` when proposing changes to the fork.
+3. For patching, use a squash commit to merge the PR. This ensures that each patch appears as a single commit in the `dev` branch of the fork.
+4. For merging from upstream, use a merge commit to merge the PR. This ensures that the upstream history is kept in the `dev` branch of the fork.
+5. Please avoid mixing code changes and upstream merge in a single PR.
+
 # Extensible SQL Lexer and Parser for Rust
 
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)

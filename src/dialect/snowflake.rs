@@ -23,7 +23,9 @@ use crate::ast::helpers::stmt_data_loading::{
     StageParamsObject,
 };
 use crate::ast::{
-    CommentDef, Ident, ObjectName, RowAccessPolicy, Statement, Tag, WrappedCollection,
+    ColumnOption, ColumnPolicy, ColumnPolicyProperty, Ident, IdentityParameters, IdentityProperty,
+    IdentityPropertyFormatKind, IdentityPropertyKind, IdentityPropertyOrder, ObjectName,
+    RowAccessPolicy, Statement, TagsColumnOption, WrappedCollection,
 };
 use crate::dialect::{Dialect, Precedence};
 use crate::keywords::Keyword;
@@ -36,6 +38,8 @@ use alloc::vec::Vec;
 #[cfg(not(feature = "std"))]
 use alloc::{format, vec};
 
+use super::keywords::RESERVED_FOR_IDENTIFIER;
+
 /// A [`Dialect`] for [Snowflake](https://www.snowflake.com/)
 #[derive(Debug, Default)]
 pub struct SnowflakeDialect;
@@ -47,6 +51,14 @@ impl Dialect for SnowflakeDialect {
     }
 
     fn supports_projection_trailing_commas(&self) -> bool {
+        true
+    }
+
+    // Snowflake supports double-dot notation when the schema name is not specified
+    // In this case the default PUBLIC schema is used
+    //
+    // see https://docs.snowflake.com/en/sql-reference/name-resolution#resolution-when-schema-omitted-double-dot-notation
+    fn supports_object_name_double_dot_notation(&self) -> bool {
         true
     }
 
@@ -91,6 +103,11 @@ impl Dialect for SnowflakeDialect {
 
     /// See [doc](https://docs.snowflake.com/en/sql-reference/sql/set#syntax)
     fn supports_parenthesized_set_variables(&self) -> bool {
+        true
+    }
+
+    /// See [doc](https://docs.snowflake.com/en/sql-reference/sql/comment)
+    fn supports_comment_on(&self) -> bool {
         true
     }
 
@@ -151,6 +168,36 @@ impl Dialect for SnowflakeDialect {
         None
     }
 
+    fn parse_column_option(
+        &self,
+        parser: &mut Parser,
+    ) -> Result<Option<Result<Option<ColumnOption>, ParserError>>, ParserError> {
+        parser.maybe_parse(|parser| {
+            let with = parser.parse_keyword(Keyword::WITH);
+
+            if parser.parse_keyword(Keyword::IDENTITY) {
+                Ok(parse_identity_property(parser)
+                    .map(|p| Some(ColumnOption::Identity(IdentityPropertyKind::Identity(p)))))
+            } else if parser.parse_keyword(Keyword::AUTOINCREMENT) {
+                Ok(parse_identity_property(parser).map(|p| {
+                    Some(ColumnOption::Identity(IdentityPropertyKind::Autoincrement(
+                        p,
+                    )))
+                }))
+            } else if parser.parse_keywords(&[Keyword::MASKING, Keyword::POLICY]) {
+                Ok(parse_column_policy_property(parser, with)
+                    .map(|p| Some(ColumnOption::Policy(ColumnPolicy::MaskingPolicy(p)))))
+            } else if parser.parse_keywords(&[Keyword::PROJECTION, Keyword::POLICY]) {
+                Ok(parse_column_policy_property(parser, with)
+                    .map(|p| Some(ColumnOption::Policy(ColumnPolicy::ProjectionPolicy(p)))))
+            } else if parser.parse_keywords(&[Keyword::TAG]) {
+                Ok(parse_column_tags(parser, with).map(|p| Some(ColumnOption::Tags(p))))
+            } else {
+                Err(ParserError::ParserError("not found match".to_string()))
+            }
+        })
+    }
+
     fn get_next_precedence(&self, parser: &Parser) -> Option<Result<u8, ParserError>> {
         let token = parser.peek_token();
         // Snowflake supports the `:` cast operator unlike other dialects
@@ -170,6 +217,22 @@ impl Dialect for SnowflakeDialect {
 
     fn allow_extract_single_quotes(&self) -> bool {
         true
+    }
+
+    /// Snowflake expects the `LIKE` option before the `IN` option,
+    /// for example: <https://docs.snowflake.com/en/sql-reference/sql/show-views#syntax>
+    fn supports_show_like_before_in(&self) -> bool {
+        true
+    }
+
+    fn is_reserved_for_identifier(&self, kw: Keyword) -> bool {
+        // Unreserve some keywords that Snowflake accepts as identifiers
+        // See: https://docs.snowflake.com/en/sql-reference/reserved-keywords
+        if matches!(kw, Keyword::INTERVAL) {
+            false
+        } else {
+            RESERVED_FOR_IDENTIFIER.contains(&kw)
+        }
     }
 }
 
@@ -210,16 +273,12 @@ pub fn parse_create_table(
                     builder = builder.copy_grants(true);
                 }
                 Keyword::COMMENT => {
-                    parser.expect_token(&Token::Eq)?;
-                    let next_token = parser.next_token();
-                    let comment = match next_token.token {
-                        Token::SingleQuotedString(str) => Some(CommentDef::WithEq(str)),
-                        _ => parser.expected("comment", next_token)?,
-                    };
-                    builder = builder.comment(comment);
+                    // Rewind the COMMENT keyword
+                    parser.prev_token();
+                    builder = builder.comment(parser.parse_optional_inline_comment()?);
                 }
                 Keyword::AS => {
-                    let query = parser.parse_boxed_query()?;
+                    let query = parser.parse_query()?;
                     builder = builder.query(Some(query));
                     break;
                 }
@@ -313,18 +372,14 @@ pub fn parse_create_table(
                         builder.with_row_access_policy(Some(RowAccessPolicy::new(policy, columns)))
                 }
                 Keyword::TAG => {
-                    fn parse_tag(parser: &mut Parser) -> Result<Tag, ParserError> {
-                        let name = parser.parse_identifier(false)?;
-                        parser.expect_token(&Token::Eq)?;
-                        let value = parser.parse_literal_string()?;
-
-                        Ok(Tag::new(name, value))
-                    }
-
                     parser.expect_token(&Token::LParen)?;
-                    let tags = parser.parse_comma_separated(parse_tag)?;
+                    let tags = parser.parse_comma_separated(Parser::parse_tag)?;
                     parser.expect_token(&Token::RParen)?;
                     builder = builder.with_tags(Some(tags));
+                }
+                Keyword::ON if parser.parse_keyword(Keyword::COMMIT) => {
+                    let on_commit = Some(parser.parse_create_table_on_commit()?);
+                    builder = builder.on_commit(on_commit);
                 }
                 _ => {
                     return parser.expected("end of statement", next_token);
@@ -781,4 +836,80 @@ fn parse_parentheses_options(parser: &mut Parser) -> Result<Vec<DataLoadingOptio
         }?;
     }
     Ok(options)
+}
+
+/// Parsing a property of identity or autoincrement column option
+/// Syntax:
+/// ```sql
+/// [ (seed , increment) | START num INCREMENT num ] [ ORDER | NOORDER ]
+/// ```
+/// [Snowflake]: https://docs.snowflake.com/en/sql-reference/sql/create-table
+fn parse_identity_property(parser: &mut Parser) -> Result<IdentityProperty, ParserError> {
+    let parameters = if parser.consume_token(&Token::LParen) {
+        let seed = parser.parse_number()?;
+        parser.expect_token(&Token::Comma)?;
+        let increment = parser.parse_number()?;
+        parser.expect_token(&Token::RParen)?;
+
+        Some(IdentityPropertyFormatKind::FunctionCall(
+            IdentityParameters { seed, increment },
+        ))
+    } else if parser.parse_keyword(Keyword::START) {
+        let seed = parser.parse_number()?;
+        parser.expect_keyword(Keyword::INCREMENT)?;
+        let increment = parser.parse_number()?;
+
+        Some(IdentityPropertyFormatKind::StartAndIncrement(
+            IdentityParameters { seed, increment },
+        ))
+    } else {
+        None
+    };
+    let order = match parser.parse_one_of_keywords(&[Keyword::ORDER, Keyword::NOORDER]) {
+        Some(Keyword::ORDER) => Some(IdentityPropertyOrder::Order),
+        Some(Keyword::NOORDER) => Some(IdentityPropertyOrder::NoOrder),
+        _ => None,
+    };
+    Ok(IdentityProperty { parameters, order })
+}
+
+/// Parsing a policy property of column option
+/// Syntax:
+/// ```sql
+/// <policy_name> [ USING ( <col_name> , <cond_col1> , ... )
+/// ```
+/// [Snowflake]: https://docs.snowflake.com/en/sql-reference/sql/create-table
+fn parse_column_policy_property(
+    parser: &mut Parser,
+    with: bool,
+) -> Result<ColumnPolicyProperty, ParserError> {
+    let policy_name = parser.parse_identifier(false)?;
+    let using_columns = if parser.parse_keyword(Keyword::USING) {
+        parser.expect_token(&Token::LParen)?;
+        let columns = parser.parse_comma_separated(|p| p.parse_identifier(false))?;
+        parser.expect_token(&Token::RParen)?;
+        Some(columns)
+    } else {
+        None
+    };
+
+    Ok(ColumnPolicyProperty {
+        with,
+        policy_name,
+        using_columns,
+    })
+}
+
+/// Parsing tags list of column
+/// Syntax:
+/// ```sql
+/// ( <tag_name> = '<tag_value>' [ , <tag_name> = '<tag_value>' , ... ] )
+/// ```
+/// [Snowflake]: https://docs.snowflake.com/en/sql-reference/sql/create-table
+fn parse_column_tags(parser: &mut Parser, with: bool) -> Result<TagsColumnOption, ParserError> {
+    parser.expect_token(&Token::LParen)?;
+    let tags = parser.parse_comma_separated(Parser::parse_tag)?;
+    parser.expect_token(&Token::RParen)?;
+
+    Ok(TagsColumnOption { with, tags })
 }

@@ -18,6 +18,7 @@
 #[macro_use]
 mod test_utils;
 
+use sqlparser::tokenizer::Span;
 use test_utils::*;
 
 use sqlparser::ast::*;
@@ -31,30 +32,25 @@ fn test_square_brackets_over_db_schema_table_name() {
         select.projection[0],
         SelectItem::UnnamedExpr(Expr::Identifier(Ident {
             value: "col1".to_string(),
-            quote_style: Some('[')
+            quote_style: Some('['),
+            span: Span::empty(),
         })),
     );
     assert_eq!(
         select.from[0],
         TableWithJoins {
-            relation: TableFactor::Table {
-                name: ObjectName(vec![
-                    Ident {
-                        value: "test_schema".to_string(),
-                        quote_style: Some('[')
-                    },
-                    Ident {
-                        value: "test_table".to_string(),
-                        quote_style: Some('[')
-                    }
-                ]),
-                alias: None,
-                args: None,
-                with_hints: vec![],
-                version: None,
-                partitions: vec![],
-                with_ordinality: false,
-            },
+            relation: table_from_name(ObjectName(vec![
+                Ident {
+                    value: "test_schema".to_string(),
+                    quote_style: Some('['),
+                    span: Span::empty(),
+                },
+                Ident {
+                    value: "test_table".to_string(),
+                    quote_style: Some('['),
+                    span: Span::empty(),
+                }
+            ])),
             joins: vec![],
         }
     );
@@ -78,30 +74,25 @@ fn test_double_quotes_over_db_schema_table_name() {
         select.projection[0],
         SelectItem::UnnamedExpr(Expr::Identifier(Ident {
             value: "col1".to_string(),
-            quote_style: Some('"')
+            quote_style: Some('"'),
+            span: Span::empty(),
         })),
     );
     assert_eq!(
         select.from[0],
         TableWithJoins {
-            relation: TableFactor::Table {
-                name: ObjectName(vec![
-                    Ident {
-                        value: "test_schema".to_string(),
-                        quote_style: Some('"')
-                    },
-                    Ident {
-                        value: "test_table".to_string(),
-                        quote_style: Some('"')
-                    }
-                ]),
-                alias: None,
-                args: None,
-                with_hints: vec![],
-                version: None,
-                partitions: vec![],
-                with_ordinality: false,
-            },
+            relation: table_from_name(ObjectName(vec![
+                Ident {
+                    value: "test_schema".to_string(),
+                    quote_style: Some('"'),
+                    span: Span::empty(),
+                },
+                Ident {
+                    value: "test_table".to_string(),
+                    quote_style: Some('"'),
+                    span: Span::empty(),
+                }
+            ])),
             joins: vec![],
         }
     );
@@ -121,8 +112,7 @@ fn parse_delimited_identifiers() {
             args,
             with_hints,
             version,
-            with_ordinality: _,
-            partitions: _,
+            ..
         } => {
             assert_eq!(vec![Ident::with_quote('"', "a table")], name.0);
             assert_eq!(Ident::with_quote('"', "alias"), alias.unwrap().name);
@@ -144,6 +134,7 @@ fn parse_delimited_identifiers() {
     assert_eq!(
         &Expr::Function(Function {
             name: ObjectName(vec![Ident::with_quote('"', "myfun")]),
+            uses_odbc_syntax: false,
             parameters: FunctionArguments::None,
             args: FunctionArguments::List(FunctionArgumentList {
                 duplicate_treatment: None,
@@ -166,22 +157,21 @@ fn parse_delimited_identifiers() {
     }
 
     redshift().verified_stmt(r#"CREATE TABLE "foo" ("bar" "int")"#);
+    // An alias starting with a number
+    redshift().verified_stmt(r#"CREATE TABLE "foo" ("1" INT)"#);
     redshift().verified_stmt(r#"ALTER TABLE foo ADD CONSTRAINT "bar" PRIMARY KEY (baz)"#);
     //TODO verified_stmt(r#"UPDATE foo SET "bar" = 5"#);
 }
 
 fn redshift() -> TestedDialects {
-    TestedDialects {
-        dialects: vec![Box::new(RedshiftSqlDialect {})],
-        options: None,
-    }
+    TestedDialects::new(vec![Box::new(RedshiftSqlDialect {})])
 }
 
 fn redshift_and_generic() -> TestedDialects {
-    TestedDialects {
-        dialects: vec![Box::new(RedshiftSqlDialect {}), Box::new(GenericDialect {})],
-        options: None,
-    }
+    TestedDialects::new(vec![
+        Box::new(RedshiftSqlDialect {}),
+        Box::new(GenericDialect {}),
+    ])
 }
 
 #[test]
@@ -198,4 +188,197 @@ fn test_sharp() {
 fn test_create_view_with_no_schema_binding() {
     redshift_and_generic()
         .verified_stmt("CREATE VIEW myevent AS SELECT eventname FROM event WITH NO SCHEMA BINDING");
+}
+
+#[test]
+fn test_redshift_json_path() {
+    let dialects = all_dialects_where(|d| d.supports_partiql());
+    let sql = "SELECT cust.c_orders[0].o_orderkey FROM customer_orders_lineitem";
+    let select = dialects.verified_only_select(sql);
+
+    assert_eq!(
+        &Expr::JsonAccess {
+            value: Box::new(Expr::CompoundIdentifier(vec![
+                Ident::new("cust"),
+                Ident::new("c_orders")
+            ])),
+            path: JsonPath {
+                path: vec![
+                    JsonPathElem::Bracket {
+                        key: Expr::Value(number("0"))
+                    },
+                    JsonPathElem::Dot {
+                        key: "o_orderkey".to_string(),
+                        quoted: false
+                    }
+                ]
+            }
+        },
+        expr_from_projection(only(&select.projection))
+    );
+
+    let sql = "SELECT cust.c_orders[0]['id'] FROM customer_orders_lineitem";
+    let select = dialects.verified_only_select(sql);
+    assert_eq!(
+        &Expr::JsonAccess {
+            value: Box::new(Expr::CompoundIdentifier(vec![
+                Ident::new("cust"),
+                Ident::new("c_orders")
+            ])),
+            path: JsonPath {
+                path: vec![
+                    JsonPathElem::Bracket {
+                        key: Expr::Value(number("0"))
+                    },
+                    JsonPathElem::Bracket {
+                        key: Expr::Value(Value::SingleQuotedString("id".to_owned()))
+                    }
+                ]
+            }
+        },
+        expr_from_projection(only(&select.projection))
+    );
+
+    let sql = "SELECT db1.sc1.tbl1.col1[0]['id'] FROM customer_orders_lineitem";
+    let select = dialects.verified_only_select(sql);
+    assert_eq!(
+        &Expr::JsonAccess {
+            value: Box::new(Expr::CompoundIdentifier(vec![
+                Ident::new("db1"),
+                Ident::new("sc1"),
+                Ident::new("tbl1"),
+                Ident::new("col1")
+            ])),
+            path: JsonPath {
+                path: vec![
+                    JsonPathElem::Bracket {
+                        key: Expr::Value(number("0"))
+                    },
+                    JsonPathElem::Bracket {
+                        key: Expr::Value(Value::SingleQuotedString("id".to_owned()))
+                    }
+                ]
+            }
+        },
+        expr_from_projection(only(&select.projection))
+    );
+
+    let sql = r#"SELECT db1.sc1.tbl1.col1[0]."id" FROM customer_orders_lineitem"#;
+    let select = dialects.verified_only_select(sql);
+    assert_eq!(
+        &Expr::JsonAccess {
+            value: Box::new(Expr::CompoundIdentifier(vec![
+                Ident::new("db1"),
+                Ident::new("sc1"),
+                Ident::new("tbl1"),
+                Ident::new("col1")
+            ])),
+            path: JsonPath {
+                path: vec![
+                    JsonPathElem::Bracket {
+                        key: Expr::Value(number("0"))
+                    },
+                    JsonPathElem::Dot {
+                        key: "id".to_string(),
+                        quoted: true,
+                    }
+                ]
+            }
+        },
+        expr_from_projection(only(&select.projection))
+    );
+}
+
+#[test]
+fn test_parse_json_path_from() {
+    let dialects = all_dialects_where(|d| d.supports_partiql());
+    let select = dialects.verified_only_select("SELECT * FROM src[0].a AS a");
+    match &select.from[0].relation {
+        TableFactor::Table {
+            name, json_path, ..
+        } => {
+            assert_eq!(name, &ObjectName(vec![Ident::new("src")]));
+            assert_eq!(
+                json_path,
+                &Some(JsonPath {
+                    path: vec![
+                        JsonPathElem::Bracket {
+                            key: Expr::Value(number("0"))
+                        },
+                        JsonPathElem::Dot {
+                            key: "a".to_string(),
+                            quoted: false
+                        }
+                    ]
+                })
+            );
+        }
+        _ => panic!(),
+    }
+
+    let select = dialects.verified_only_select("SELECT * FROM src[0].a[1].b AS a");
+    match &select.from[0].relation {
+        TableFactor::Table {
+            name, json_path, ..
+        } => {
+            assert_eq!(name, &ObjectName(vec![Ident::new("src")]));
+            assert_eq!(
+                json_path,
+                &Some(JsonPath {
+                    path: vec![
+                        JsonPathElem::Bracket {
+                            key: Expr::Value(number("0"))
+                        },
+                        JsonPathElem::Dot {
+                            key: "a".to_string(),
+                            quoted: false
+                        },
+                        JsonPathElem::Bracket {
+                            key: Expr::Value(Value::Number("1".parse().unwrap(), None))
+                        },
+                        JsonPathElem::Dot {
+                            key: "b".to_string(),
+                            quoted: false
+                        },
+                    ]
+                })
+            );
+        }
+        _ => panic!(),
+    }
+
+    let select = dialects.verified_only_select("SELECT * FROM src.a.b");
+    match &select.from[0].relation {
+        TableFactor::Table {
+            name, json_path, ..
+        } => {
+            assert_eq!(
+                name,
+                &ObjectName(vec![Ident::new("src"), Ident::new("a"), Ident::new("b")])
+            );
+            assert_eq!(json_path, &None);
+        }
+        _ => panic!(),
+    }
+}
+
+#[test]
+fn test_parse_select_numbered_columns() {
+    // An alias starting with a number
+    redshift_and_generic().verified_stmt(r#"SELECT 1 AS "1" FROM a"#);
+    redshift_and_generic().verified_stmt(r#"SELECT 1 AS "1abc" FROM a"#);
+}
+
+#[test]
+fn test_parse_nested_quoted_identifier() {
+    redshift().verified_stmt(r#"SELECT 1 AS ["1"] FROM a"#);
+    redshift().verified_stmt(r#"SELECT 1 AS ["[="] FROM a"#);
+    redshift().verified_stmt(r#"SELECT 1 AS ["=]"] FROM a"#);
+    redshift().verified_stmt(r#"SELECT 1 AS ["a[b]"] FROM a"#);
+    // trim spaces
+    redshift().one_statement_parses_to(r#"SELECT 1 AS [ " 1 " ]"#, r#"SELECT 1 AS [" 1 "]"#);
+    // invalid query
+    assert!(redshift()
+        .parse_sql_statements(r#"SELECT 1 AS ["1]"#)
+        .is_err());
 }

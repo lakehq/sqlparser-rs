@@ -25,9 +25,22 @@ use serde::{Deserialize, Serialize};
 #[cfg(feature = "visitor")]
 use sqlparser_derive::{Visit, VisitMut};
 
-use crate::ast::{display_comma_separated, IntervalUnit, ObjectName, StructField, UnionField};
+use crate::ast::{
+    display_comma_separated, Expr, IntervalUnit, ObjectName, StructField, UnionField,
+};
 
 use super::{value::escape_single_quote_string, ColumnDef};
+
+#[derive(Debug, Clone, PartialEq, PartialOrd, Eq, Ord, Hash)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "visitor", derive(Visit, VisitMut))]
+pub enum EnumMember {
+    Name(String),
+    /// ClickHouse allows to specify an integer value for each enum value.
+    ///
+    /// [clickhouse](https://clickhouse.com/docs/en/sql-reference/data-types/enum)
+    NamedValue(String, Expr),
+}
 
 /// SQL data types
 #[derive(Debug, Clone, PartialEq, PartialOrd, Eq, Ord, Hash)]
@@ -80,6 +93,18 @@ pub enum DataType {
     /// [standard]: https://jakewheat.github.io/sql-overview/sql-2016-foundation-grammar.html#binary-large-object-string-type
     /// [Oracle]: https://docs.oracle.com/javadb/10.8.3.0/ref/rrefblob.html
     Blob(Option<u64>),
+    /// [MySQL] blob with up to 2**8 bytes
+    ///
+    /// [MySQL]: https://dev.mysql.com/doc/refman/9.1/en/blob.html
+    TinyBlob,
+    /// [MySQL] blob with up to 2**24 bytes
+    ///
+    /// [MySQL]: https://dev.mysql.com/doc/refman/9.1/en/blob.html
+    MediumBlob,
+    /// [MySQL] blob with up to 2**32 bytes
+    ///
+    /// [MySQL]: https://dev.mysql.com/doc/refman/9.1/en/blob.html
+    LongBlob,
     /// Variable-length binary data with optional length.
     ///
     /// [bigquery]: https://cloud.google.com/bigquery/docs/reference/standard-sql/data-types#bytes_type
@@ -283,6 +308,18 @@ pub enum DataType {
     Regclass,
     /// Text
     Text,
+    /// [MySQL] text with up to 2**8 bytes
+    ///
+    /// [MySQL]: https://dev.mysql.com/doc/refman/9.1/en/blob.html
+    TinyText,
+    /// [MySQL] text with up to 2**24 bytes
+    ///
+    /// [MySQL]: https://dev.mysql.com/doc/refman/9.1/en/blob.html
+    MediumText,
+    /// [MySQL] text with up to 2**32 bytes
+    ///
+    /// [MySQL]: https://dev.mysql.com/doc/refman/9.1/en/blob.html
+    LongText,
     /// String with optional length.
     String(Option<u64>),
     /// A fixed-length string e.g [ClickHouse][1].
@@ -291,6 +328,16 @@ pub enum DataType {
     FixedString(u64),
     /// Bytea
     Bytea,
+    /// Bit string, e.g. [Postgres], [MySQL], or [MSSQL]
+    ///
+    /// [Postgres]: https://www.postgresql.org/docs/current/datatype-bit.html
+    /// [MySQL]: https://dev.mysql.com/doc/refman/9.1/en/bit-type.html
+    /// [MSSQL]: https://learn.microsoft.com/en-us/sql/t-sql/data-types/bit-transact-sql?view=sql-server-ver16
+    Bit(Option<u64>),
+    /// Variable-length bit string e.g. [Postgres]
+    ///
+    /// [Postgres]: https://www.postgresql.org/docs/current/datatype-bit.html
+    BitVarying(Option<u64>),
     /// Custom type such as enums
     Custom(ObjectName, Vec<String>),
     /// Arrays
@@ -308,7 +355,7 @@ pub enum DataType {
     /// [clickhouse]: https://clickhouse.com/docs/en/sql-reference/data-types/nested-data-structures/nested
     Nested(Vec<ColumnDef>),
     /// Enums
-    Enum(Vec<String>),
+    Enum(Vec<EnumMember>, Option<u8>),
     /// Set
     Set(Vec<String>),
     /// Struct
@@ -336,6 +383,10 @@ pub enum DataType {
     ///
     /// [postgresql]: https://www.postgresql.org/docs/current/plpgsql-trigger.html
     Trigger,
+    /// Any data type, used in BigQuery UDF definitions for templated parameters
+    ///
+    /// [bigquery]: https://cloud.google.com/bigquery/docs/user-defined-functions#templated-sql-udf-parameters
+    AnyType,
 }
 
 impl fmt::Display for DataType {
@@ -348,7 +399,6 @@ impl fmt::Display for DataType {
             DataType::CharacterVarying(size) => {
                 format_character_string_type(f, "CHARACTER VARYING", size)
             }
-
             DataType::CharVarying(size) => format_character_string_type(f, "CHAR VARYING", size),
             DataType::Varchar(size) => format_character_string_type(f, "VARCHAR", size),
             DataType::Nvarchar(size) => format_character_string_type(f, "NVARCHAR", size),
@@ -365,6 +415,9 @@ impl fmt::Display for DataType {
                 format_type_with_optional_length(f, "VARBINARY", size, false)
             }
             DataType::Blob(size) => format_type_with_optional_length(f, "BLOB", size, false),
+            DataType::TinyBlob => write!(f, "TINYBLOB"),
+            DataType::MediumBlob => write!(f, "MEDIUMBLOB"),
+            DataType::LongBlob => write!(f, "LONGBLOB"),
             DataType::Bytes(size) => format_type_with_optional_length(f, "BYTES", size, false),
             DataType::Numeric(info) => {
                 write!(f, "NUMERIC{info}")
@@ -502,8 +555,15 @@ impl fmt::Display for DataType {
             DataType::JSONB => write!(f, "JSONB"),
             DataType::Regclass => write!(f, "REGCLASS"),
             DataType::Text => write!(f, "TEXT"),
+            DataType::TinyText => write!(f, "TINYTEXT"),
+            DataType::MediumText => write!(f, "MEDIUMTEXT"),
+            DataType::LongText => write!(f, "LONGTEXT"),
             DataType::String(size) => format_type_with_optional_length(f, "STRING", size, false),
             DataType::Bytea => write!(f, "BYTEA"),
+            DataType::Bit(size) => format_type_with_optional_length(f, "BIT", size, false),
+            DataType::BitVarying(size) => {
+                format_type_with_optional_length(f, "BIT VARYING", size, false)
+            }
             DataType::Array(ty) => match ty {
                 ArrayElemTypeDef::None => write!(f, "ARRAY"),
                 ArrayElemTypeDef::SquareBracket(t, None) => write!(f, "{t}[]"),
@@ -518,13 +578,24 @@ impl fmt::Display for DataType {
                     write!(f, "{}({})", ty, modifiers.join(", "))
                 }
             }
-            DataType::Enum(vals) => {
-                write!(f, "ENUM(")?;
+            DataType::Enum(vals, bits) => {
+                match bits {
+                    Some(bits) => write!(f, "ENUM{}", bits),
+                    None => write!(f, "ENUM"),
+                }?;
+                write!(f, "(")?;
                 for (i, v) in vals.iter().enumerate() {
                     if i != 0 {
                         write!(f, ", ")?;
                     }
-                    write!(f, "'{}'", escape_single_quote_string(v))?;
+                    match v {
+                        EnumMember::Name(name) => {
+                            write!(f, "'{}'", escape_single_quote_string(name))?
+                        }
+                        EnumMember::NamedValue(name, value) => {
+                            write!(f, "'{}' = {}", escape_single_quote_string(name), value)?
+                        }
+                    }
                 }
                 write!(f, ")")
             }
@@ -576,6 +647,7 @@ impl fmt::Display for DataType {
             }
             DataType::Unspecified => Ok(()),
             DataType::Trigger => write!(f, "TRIGGER"),
+            DataType::AnyType => write!(f, "ANY TYPE"),
         }
     }
 }

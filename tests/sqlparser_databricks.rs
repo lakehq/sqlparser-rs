@@ -24,17 +24,14 @@ use test_utils::*;
 mod test_utils;
 
 fn databricks() -> TestedDialects {
-    TestedDialects {
-        dialects: vec![Box::new(DatabricksDialect {})],
-        options: None,
-    }
+    TestedDialects::new(vec![Box::new(DatabricksDialect {})])
 }
 
 fn databricks_and_generic() -> TestedDialects {
-    TestedDialects {
-        dialects: vec![Box::new(DatabricksDialect {}), Box::new(GenericDialect {})],
-        options: None,
-    }
+    TestedDialects::new(vec![
+        Box::new(DatabricksDialect {}),
+        Box::new(GenericDialect {}),
+    ])
 }
 
 #[test]
@@ -188,15 +185,7 @@ fn test_values_clause() {
         "SELECT * FROM values",
     ));
     assert_eq!(
-        Some(&TableFactor::Table {
-            name: ObjectName(vec![Ident::new("values")]),
-            alias: None,
-            args: None,
-            with_hints: vec![],
-            version: None,
-            partitions: vec![],
-            with_ordinality: false,
-        }),
+        Some(&table_from_name(ObjectName(vec![Ident::new("values")]))),
         query
             .body
             .as_select()
@@ -279,4 +268,39 @@ fn parse_use() {
             ParserError::ParserError("Expected: identifier, found: EOF".to_string()),
         );
     }
+}
+
+#[test]
+fn parse_databricks_struct_function() {
+    assert_eq!(
+        databricks_and_generic()
+            .verified_only_select("SELECT STRUCT(1, 'foo')")
+            .projection[0],
+        SelectItem::UnnamedExpr(Expr::Struct {
+            values: vec![
+                Expr::Value(number("1")),
+                Expr::Value(Value::SingleQuotedString("foo".to_string()))
+            ],
+            fields: vec![]
+        })
+    );
+    assert_eq!(
+        databricks_and_generic()
+            .verified_only_select("SELECT STRUCT(1 AS one, 'foo' AS foo, false)")
+            .projection[0],
+        SelectItem::UnnamedExpr(Expr::Struct {
+            values: vec![
+                Expr::Named {
+                    expr: Expr::Value(number("1")).into(),
+                    name: Ident::new("one")
+                },
+                Expr::Named {
+                    expr: Expr::Value(Value::SingleQuotedString("foo".to_string())).into(),
+                    name: Ident::new("foo")
+                },
+                Expr::Value(Value::Boolean(false))
+            ],
+            fields: vec![]
+        })
+    );
 }

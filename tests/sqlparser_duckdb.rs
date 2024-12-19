@@ -18,23 +18,22 @@
 #[macro_use]
 mod test_utils;
 
+use helpers::attached_token::AttachedToken;
+use sqlparser::tokenizer::Span;
 use test_utils::*;
 
 use sqlparser::ast::*;
 use sqlparser::dialect::{DuckDbDialect, GenericDialect};
 
 fn duckdb() -> TestedDialects {
-    TestedDialects {
-        dialects: vec![Box::new(DuckDbDialect {})],
-        options: None,
-    }
+    TestedDialects::new(vec![Box::new(DuckDbDialect {})])
 }
 
 fn duckdb_and_generic() -> TestedDialects {
-    TestedDialects {
-        dialects: vec![Box::new(DuckDbDialect {}), Box::new(GenericDialect {})],
-        options: None,
-    }
+    TestedDialects::new(vec![
+        Box::new(DuckDbDialect {}),
+        Box::new(GenericDialect {}),
+    ])
 }
 
 #[test]
@@ -254,7 +253,7 @@ fn test_create_table_macro() {
             MacroArg::new("col1_value"),
             MacroArg::new("col2_value"),
         ]),
-        definition: MacroDefinition::Table(duckdb().verified_query(query)),
+        definition: MacroDefinition::Table(duckdb().verified_query(query).into()),
     };
     assert_eq!(expected, macro_);
 }
@@ -274,29 +273,18 @@ fn test_select_union_by_name() {
             op: SetOperator::Union,
             set_quantifier: *expected_quantifier,
             left: Box::<SetExpr>::new(SetExpr::Select(Box::new(Select {
+                select_token: AttachedToken::empty(),
                 distinct: None,
                 top: None,
-                projection: vec![SelectItem::Wildcard(WildcardAdditionalOptions {
-                    opt_ilike: None,
-                    opt_exclude: None,
-                    opt_except: None,
-                    opt_rename: None,
-                    opt_replace: None,
-                })],
+                projection: vec![SelectItem::Wildcard(WildcardAdditionalOptions::default())],
+                top_before_distinct: false,
                 into: None,
                 from: vec![TableWithJoins {
-                    relation: TableFactor::Table {
-                        name: ObjectName(vec![Ident {
-                            value: "capitals".to_string(),
-                            quote_style: None,
-                        }]),
-                        alias: None,
-                        args: None,
-                        with_hints: vec![],
-                        version: None,
-                        partitions: vec![],
-                        with_ordinality: false,
-                    },
+                    relation: table_from_name(ObjectName(vec![Ident {
+                        value: "capitals".to_string(),
+                        quote_style: None,
+                        span: Span::empty(),
+                    }])),
                     joins: vec![],
                 }],
                 lateral_views: vec![],
@@ -314,29 +302,18 @@ fn test_select_union_by_name() {
                 connect_by: None,
             }))),
             right: Box::<SetExpr>::new(SetExpr::Select(Box::new(Select {
+                select_token: AttachedToken::empty(),
                 distinct: None,
                 top: None,
-                projection: vec![SelectItem::Wildcard(WildcardAdditionalOptions {
-                    opt_ilike: None,
-                    opt_exclude: None,
-                    opt_except: None,
-                    opt_rename: None,
-                    opt_replace: None,
-                })],
+                projection: vec![SelectItem::Wildcard(WildcardAdditionalOptions::default())],
+                top_before_distinct: false,
                 into: None,
                 from: vec![TableWithJoins {
-                    relation: TableFactor::Table {
-                        name: ObjectName(vec![Ident {
-                            value: "weather".to_string(),
-                            quote_style: None,
-                        }]),
-                        alias: None,
-                        args: None,
-                        with_hints: vec![],
-                        version: None,
-                        partitions: vec![],
-                        with_ordinality: false,
-                    },
+                    relation: table_from_name(ObjectName(vec![Ident {
+                        value: "weather".to_string(),
+                        quote_style: None,
+                        span: Span::empty(),
+                    }])),
                     joins: vec![],
                 }],
                 lateral_views: vec![],
@@ -366,7 +343,8 @@ fn test_duckdb_install() {
         Statement::Install {
             extension_name: Ident {
                 value: "tpch".to_string(),
-                quote_style: None
+                quote_style: None,
+                span: Span::empty()
             }
         }
     );
@@ -379,7 +357,8 @@ fn test_duckdb_load_extension() {
         Statement::Load {
             extension_name: Ident {
                 value: "my_extension".to_string(),
-                quote_style: None
+                quote_style: None,
+                span: Span::empty()
             }
         },
         stmt
@@ -621,6 +600,7 @@ fn test_duckdb_named_argument_function_with_assignment_operator() {
     assert_eq!(
         &Expr::Function(Function {
             name: ObjectName(vec![Ident::new("FUN")]),
+            uses_odbc_syntax: false,
             parameters: FunctionArguments::None,
             args: FunctionArguments::List(FunctionArgumentList {
                 duplicate_treatment: None,

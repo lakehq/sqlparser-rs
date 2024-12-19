@@ -44,16 +44,47 @@ use pretty_assertions::assert_eq;
 pub struct TestedDialects {
     pub dialects: Vec<Box<dyn Dialect>>,
     pub options: Option<ParserOptions>,
+    pub recursion_limit: Option<usize>,
 }
 
 impl TestedDialects {
+    /// Create a TestedDialects with default options and the given dialects.
+    pub fn new(dialects: Vec<Box<dyn Dialect>>) -> Self {
+        Self {
+            dialects,
+            options: None,
+            recursion_limit: None,
+        }
+    }
+
+    pub fn new_with_options(dialects: Vec<Box<dyn Dialect>>, options: ParserOptions) -> Self {
+        Self {
+            dialects,
+            options: Some(options),
+            recursion_limit: None,
+        }
+    }
+
+    pub fn with_recursion_limit(mut self, recursion_limit: usize) -> Self {
+        self.recursion_limit = Some(recursion_limit);
+        self
+    }
+
     fn new_parser<'a>(&self, dialect: &'a dyn Dialect) -> Parser<'a> {
         let parser = Parser::new(dialect);
-        if let Some(options) = &self.options {
+        let parser = if let Some(options) = &self.options {
             parser.with_options(options.clone())
         } else {
             parser
-        }
+        };
+
+        let parser = if let Some(recursion_limit) = &self.recursion_limit {
+            parser.with_recursion_limit(*recursion_limit)
+        } else {
+            parser
+        };
+
+        parser
     }
 
     /// Run the given function for all of `self.dialects`, assert that they
@@ -211,24 +242,21 @@ impl TestedDialects {
 
 /// Returns all available dialects.
 pub fn all_dialects() -> TestedDialects {
-    let all_dialects = vec![
-        Box::new(GenericDialect {}) as Box<dyn Dialect>,
-        Box::new(PostgreSqlDialect {}) as Box<dyn Dialect>,
-        Box::new(MsSqlDialect {}) as Box<dyn Dialect>,
-        Box::new(AnsiDialect {}) as Box<dyn Dialect>,
-        Box::new(SnowflakeDialect {}) as Box<dyn Dialect>,
-        Box::new(HiveDialect {}) as Box<dyn Dialect>,
-        Box::new(RedshiftSqlDialect {}) as Box<dyn Dialect>,
-        Box::new(MySqlDialect {}) as Box<dyn Dialect>,
-        Box::new(BigQueryDialect {}) as Box<dyn Dialect>,
-        Box::new(SQLiteDialect {}) as Box<dyn Dialect>,
-        Box::new(DuckDbDialect {}) as Box<dyn Dialect>,
-        Box::new(DatabricksDialect {}) as Box<dyn Dialect>,
-    ];
-    TestedDialects {
-        dialects: all_dialects,
-        options: None,
-    }
+    TestedDialects::new(vec![
+        Box::new(GenericDialect {}),
+        Box::new(PostgreSqlDialect {}),
+        Box::new(MsSqlDialect {}),
+        Box::new(AnsiDialect {}),
+        Box::new(SnowflakeDialect {}),
+        Box::new(HiveDialect {}),
+        Box::new(RedshiftSqlDialect {}),
+        Box::new(MySqlDialect {}),
+        Box::new(BigQueryDialect {}),
+        Box::new(SQLiteDialect {}),
+        Box::new(DuckDbDialect {}),
+        Box::new(DatabricksDialect {}),
+        Box::new(ClickHouseDialect {}),
+    ])
 }
 
 /// Returns all dialects matching the given predicate.
@@ -317,6 +345,22 @@ pub fn table(name: impl Into<String>) -> TableFactor {
         version: None,
         partitions: vec![],
         with_ordinality: false,
+        json_path: None,
+        sample: None,
+    }
+}
+
+pub fn table_from_name(name: ObjectName) -> TableFactor {
+    TableFactor::Table {
+        name,
+        alias: None,
+        args: None,
+        with_hints: vec![],
+        version: None,
+        partitions: vec![],
+        with_ordinality: false,
+        json_path: None,
+        sample: None,
     }
 }
 
@@ -332,6 +376,8 @@ pub fn table_with_alias(name: impl Into<String>, alias: impl Into<String>) -> Ta
         version: None,
         partitions: vec![],
         with_ordinality: false,
+        json_path: None,
+        sample: None,
     }
 }
 
@@ -346,6 +392,7 @@ pub fn join(relation: TableFactor) -> Join {
 pub fn call(function: &str, args: impl IntoIterator<Item = Expr>) -> Expr {
     Expr::Function(Function {
         name: ObjectName(vec![Ident::new(function)]),
+        uses_odbc_syntax: false,
         parameters: FunctionArguments::None,
         args: FunctionArguments::List(FunctionArgumentList {
             duplicate_treatment: None,

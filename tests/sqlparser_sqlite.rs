@@ -22,6 +22,7 @@
 #[macro_use]
 mod test_utils;
 
+use sqlparser::keywords::Keyword;
 use test_utils::*;
 
 use sqlparser::ast::SelectItem::UnnamedExpr;
@@ -238,6 +239,43 @@ fn parse_create_table_auto_increment() {
 }
 
 #[test]
+fn parse_create_table_primary_key_asc_desc() {
+    let expected_column_def = |kind| ColumnDef {
+        name: "bar".into(),
+        data_type: DataType::Int(None),
+        collation: None,
+        options: vec![
+            ColumnOptionDef {
+                name: None,
+                option: ColumnOption::Unique {
+                    is_primary: true,
+                    characteristics: None,
+                },
+            },
+            ColumnOptionDef {
+                name: None,
+                option: ColumnOption::DialectSpecific(vec![Token::make_keyword(kind)]),
+            },
+        ],
+    };
+
+    let sql = "CREATE TABLE foo (bar INT PRIMARY KEY ASC)";
+    match sqlite_and_generic().verified_stmt(sql) {
+        Statement::CreateTable(CreateTable { columns, .. }) => {
+            assert_eq!(vec![expected_column_def("ASC")], columns);
+        }
+        _ => unreachable!(),
+    }
+    let sql = "CREATE TABLE foo (bar INT PRIMARY KEY DESC)";
+    match sqlite_and_generic().verified_stmt(sql) {
+        Statement::CreateTable(CreateTable { columns, .. }) => {
+            assert_eq!(vec![expected_column_def("DESC")], columns);
+        }
+        _ => unreachable!(),
+    }
+}
+
+#[test]
 fn parse_create_sqlite_quote() {
     let sql = "CREATE TABLE `PRIMARY` (\"KEY\" INT, [INDEX] INT)";
     match sqlite().verified_stmt(sql) {
@@ -279,6 +317,46 @@ fn parse_create_table_gencol() {
     sqlite_and_generic().verified_stmt("CREATE TABLE t1 (a INT, b INT AS (a * 2))");
     sqlite_and_generic().verified_stmt("CREATE TABLE t1 (a INT, b INT AS (a * 2) VIRTUAL)");
     sqlite_and_generic().verified_stmt("CREATE TABLE t1 (a INT, b INT AS (a * 2) STORED)");
+}
+
+#[test]
+fn parse_create_table_on_conflict_col() {
+    for keyword in [
+        Keyword::ROLLBACK,
+        Keyword::ABORT,
+        Keyword::FAIL,
+        Keyword::IGNORE,
+        Keyword::REPLACE,
+    ] {
+        let sql = format!("CREATE TABLE t1 (a INT, b INT ON CONFLICT {:?})", keyword);
+        match sqlite_and_generic().verified_stmt(&sql) {
+            Statement::CreateTable(CreateTable { columns, .. }) => {
+                assert_eq!(
+                    vec![ColumnOptionDef {
+                        name: None,
+                        option: ColumnOption::OnConflict(keyword),
+                    }],
+                    columns[1].options
+                );
+            }
+            _ => unreachable!(),
+        }
+    }
+}
+
+#[test]
+fn test_parse_create_table_on_conflict_col_err() {
+    let sql_err = "CREATE TABLE t1 (a INT, b INT ON CONFLICT BOH)";
+    let err = sqlite_and_generic()
+        .parse_sql_statements(sql_err)
+        .unwrap_err();
+    assert_eq!(
+        err,
+        ParserError::ParserError(
+            "Expected: one of ROLLBACK or ABORT or FAIL or IGNORE or REPLACE, found: BOH"
+                .to_string()
+        )
+    );
 }
 
 #[test]
@@ -341,6 +419,7 @@ fn parse_window_function_with_filter() {
             select.projection,
             vec![SelectItem::UnnamedExpr(Expr::Function(Function {
                 name: ObjectName(vec![Ident::new(func_name)]),
+                uses_odbc_syntax: false,
                 parameters: FunctionArguments::None,
                 args: FunctionArguments::List(FunctionArgumentList {
                     duplicate_treatment: None,
@@ -387,6 +466,7 @@ fn parse_update_tuple_row_values() {
     assert_eq!(
         sqlite().verified_stmt("UPDATE x SET (a, b) = (1, 2)"),
         Statement::Update {
+            or: None,
             assignments: vec![Assignment {
                 target: AssignmentTarget::Tuple(vec![
                     ObjectName(vec![Ident::new("a"),]),
@@ -399,15 +479,7 @@ fn parse_update_tuple_row_values() {
             }],
             selection: None,
             table: TableWithJoins {
-                relation: TableFactor::Table {
-                    name: ObjectName(vec![Ident::new("x")]),
-                    alias: None,
-                    args: None,
-                    with_hints: vec![],
-                    version: None,
-                    partitions: vec![],
-                    with_ordinality: false,
-                },
+                relation: table_from_name(ObjectName(vec![Ident::new("x")])),
                 joins: vec![],
             },
             from: None,
@@ -447,18 +519,17 @@ fn parse_start_transaction_with_modifier() {
     sqlite_and_generic().verified_stmt("BEGIN DEFERRED TRANSACTION");
     sqlite_and_generic().verified_stmt("BEGIN IMMEDIATE TRANSACTION");
     sqlite_and_generic().verified_stmt("BEGIN EXCLUSIVE TRANSACTION");
-    sqlite_and_generic().one_statement_parses_to("BEGIN DEFERRED", "BEGIN DEFERRED TRANSACTION");
-    sqlite_and_generic().one_statement_parses_to("BEGIN IMMEDIATE", "BEGIN IMMEDIATE TRANSACTION");
-    sqlite_and_generic().one_statement_parses_to("BEGIN EXCLUSIVE", "BEGIN EXCLUSIVE TRANSACTION");
+    sqlite_and_generic().verified_stmt("BEGIN DEFERRED");
+    sqlite_and_generic().verified_stmt("BEGIN IMMEDIATE");
+    sqlite_and_generic().verified_stmt("BEGIN EXCLUSIVE");
 
-    let unsupported_dialects = TestedDialects {
-        dialects: all_dialects()
+    let unsupported_dialects = TestedDialects::new(
+        all_dialects()
             .dialects
             .into_iter()
             .filter(|x| !(x.is::<SQLiteDialect>() || x.is::<GenericDialect>()))
             .collect(),
-        options: None,
-    };
+    );
     let res = unsupported_dialects.parse_sql_statements("BEGIN DEFERRED");
     assert_eq!(
         ParserError::ParserError("Expected: end of statement, found: DEFERRED".to_string()),
@@ -493,22 +564,16 @@ fn test_dollar_identifier_as_placeholder() {
 }
 
 fn sqlite() -> TestedDialects {
-    TestedDialects {
-        dialects: vec![Box::new(SQLiteDialect {})],
-        options: None,
-    }
+    TestedDialects::new(vec![Box::new(SQLiteDialect {})])
 }
 
 fn sqlite_with_options(options: ParserOptions) -> TestedDialects {
-    TestedDialects {
-        dialects: vec![Box::new(SQLiteDialect {})],
-        options: Some(options),
-    }
+    TestedDialects::new_with_options(vec![Box::new(SQLiteDialect {})], options)
 }
 
 fn sqlite_and_generic() -> TestedDialects {
-    TestedDialects {
-        dialects: vec![Box::new(SQLiteDialect {}), Box::new(GenericDialect {})],
-        options: None,
-    }
+    TestedDialects::new(vec![
+        Box::new(SQLiteDialect {}),
+        Box::new(GenericDialect {}),
+    ])
 }

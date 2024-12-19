@@ -356,6 +356,15 @@ fn test_snowflake_create_table_column_comment() {
 }
 
 #[test]
+fn test_snowflake_create_table_on_commit() {
+    snowflake().verified_stmt(
+        r#"CREATE LOCAL TEMPORARY TABLE "AAA"."foo" ("bar" INTEGER) ON COMMIT PRESERVE ROWS"#,
+    );
+    snowflake().verified_stmt(r#"CREATE TABLE "AAA"."foo" ("bar" INTEGER) ON COMMIT DELETE ROWS"#);
+    snowflake().verified_stmt(r#"CREATE TABLE "AAA"."foo" ("bar" INTEGER) ON COMMIT DROP"#);
+}
+
+#[test]
 fn test_snowflake_create_local_table() {
     match snowflake().verified_stmt("CREATE TABLE my_table (a INT)") {
         Statement::CreateTable(CreateTable { name, global, .. }) => {
@@ -526,6 +535,321 @@ fn test_snowflake_single_line_tokenize() {
 }
 
 #[test]
+fn test_snowflake_create_table_with_autoincrement_columns() {
+    let sql = concat!(
+        "CREATE TABLE my_table (",
+        "a INT AUTOINCREMENT ORDER, ",
+        "b INT AUTOINCREMENT(100, 1) NOORDER, ",
+        "c INT IDENTITY, ",
+        "d INT IDENTITY START 100 INCREMENT 1 ORDER",
+        ")"
+    );
+    // it is a snowflake specific options (AUTOINCREMENT/IDENTITY)
+    match snowflake().verified_stmt(sql) {
+        Statement::CreateTable(CreateTable { columns, .. }) => {
+            assert_eq!(
+                columns,
+                vec![
+                    ColumnDef {
+                        name: "a".into(),
+                        data_type: DataType::Int(None),
+                        collation: None,
+                        options: vec![ColumnOptionDef {
+                            name: None,
+                            option: ColumnOption::Identity(IdentityPropertyKind::Autoincrement(
+                                IdentityProperty {
+                                    parameters: None,
+                                    order: Some(IdentityPropertyOrder::Order),
+                                }
+                            ))
+                        }]
+                    },
+                    ColumnDef {
+                        name: "b".into(),
+                        data_type: DataType::Int(None),
+                        collation: None,
+                        options: vec![ColumnOptionDef {
+                            name: None,
+                            option: ColumnOption::Identity(IdentityPropertyKind::Autoincrement(
+                                IdentityProperty {
+                                    parameters: Some(IdentityPropertyFormatKind::FunctionCall(
+                                        IdentityParameters {
+                                            seed: Expr::Value(number("100")),
+                                            increment: Expr::Value(number("1")),
+                                        }
+                                    )),
+                                    order: Some(IdentityPropertyOrder::NoOrder),
+                                }
+                            ))
+                        }]
+                    },
+                    ColumnDef {
+                        name: "c".into(),
+                        data_type: DataType::Int(None),
+                        collation: None,
+                        options: vec![ColumnOptionDef {
+                            name: None,
+                            option: ColumnOption::Identity(IdentityPropertyKind::Identity(
+                                IdentityProperty {
+                                    parameters: None,
+                                    order: None,
+                                }
+                            ))
+                        }]
+                    },
+                    ColumnDef {
+                        name: "d".into(),
+                        data_type: DataType::Int(None),
+                        collation: None,
+                        options: vec![ColumnOptionDef {
+                            name: None,
+                            option: ColumnOption::Identity(IdentityPropertyKind::Identity(
+                                IdentityProperty {
+                                    parameters: Some(
+                                        IdentityPropertyFormatKind::StartAndIncrement(
+                                            IdentityParameters {
+                                                seed: Expr::Value(number("100")),
+                                                increment: Expr::Value(number("1")),
+                                            }
+                                        )
+                                    ),
+                                    order: Some(IdentityPropertyOrder::Order),
+                                }
+                            ))
+                        }]
+                    },
+                ]
+            );
+        }
+        _ => unreachable!(),
+    }
+}
+
+#[test]
+fn test_snowflake_create_table_with_collated_column() {
+    match snowflake_and_generic().verified_stmt("CREATE TABLE my_table (a TEXT COLLATE 'de_DE')") {
+        Statement::CreateTable(CreateTable { columns, .. }) => {
+            assert_eq!(
+                columns,
+                vec![ColumnDef {
+                    name: "a".into(),
+                    data_type: DataType::Text,
+                    collation: Some(ObjectName(vec![Ident::with_quote('\'', "de_DE")])),
+                    options: vec![]
+                },]
+            );
+        }
+        _ => unreachable!(),
+    }
+}
+
+#[test]
+fn test_snowflake_create_table_with_columns_masking_policy() {
+    for (sql, with, using_columns) in [
+        (
+            "CREATE TABLE my_table (a INT WITH MASKING POLICY p)",
+            true,
+            None,
+        ),
+        (
+            "CREATE TABLE my_table (a INT MASKING POLICY p)",
+            false,
+            None,
+        ),
+        (
+            "CREATE TABLE my_table (a INT WITH MASKING POLICY p USING (a, b))",
+            true,
+            Some(vec!["a".into(), "b".into()]),
+        ),
+        (
+            "CREATE TABLE my_table (a INT MASKING POLICY p USING (a, b))",
+            false,
+            Some(vec!["a".into(), "b".into()]),
+        ),
+    ] {
+        match snowflake().verified_stmt(sql) {
+            Statement::CreateTable(CreateTable { columns, .. }) => {
+                assert_eq!(
+                    columns,
+                    vec![ColumnDef {
+                        name: "a".into(),
+                        data_type: DataType::Int(None),
+                        collation: None,
+                        options: vec![ColumnOptionDef {
+                            name: None,
+                            option: ColumnOption::Policy(ColumnPolicy::MaskingPolicy(
+                                ColumnPolicyProperty {
+                                    with,
+                                    policy_name: "p".into(),
+                                    using_columns,
+                                }
+                            ))
+                        }],
+                    },]
+                );
+            }
+            _ => unreachable!(),
+        }
+    }
+}
+
+#[test]
+fn test_snowflake_create_table_with_columns_projection_policy() {
+    for (sql, with) in [
+        (
+            "CREATE TABLE my_table (a INT WITH PROJECTION POLICY p)",
+            true,
+        ),
+        ("CREATE TABLE my_table (a INT PROJECTION POLICY p)", false),
+    ] {
+        match snowflake().verified_stmt(sql) {
+            Statement::CreateTable(CreateTable { columns, .. }) => {
+                assert_eq!(
+                    columns,
+                    vec![ColumnDef {
+                        name: "a".into(),
+                        data_type: DataType::Int(None),
+                        collation: None,
+                        options: vec![ColumnOptionDef {
+                            name: None,
+                            option: ColumnOption::Policy(ColumnPolicy::ProjectionPolicy(
+                                ColumnPolicyProperty {
+                                    with,
+                                    policy_name: "p".into(),
+                                    using_columns: None,
+                                }
+                            ))
+                        }],
+                    },]
+                );
+            }
+            _ => unreachable!(),
+        }
+    }
+}
+
+#[test]
+fn test_snowflake_create_table_with_columns_tags() {
+    for (sql, with) in [
+        (
+            "CREATE TABLE my_table (a INT WITH TAG (A='TAG A', B='TAG B'))",
+            true,
+        ),
+        (
+            "CREATE TABLE my_table (a INT TAG (A='TAG A', B='TAG B'))",
+            false,
+        ),
+    ] {
+        match snowflake().verified_stmt(sql) {
+            Statement::CreateTable(CreateTable { columns, .. }) => {
+                assert_eq!(
+                    columns,
+                    vec![ColumnDef {
+                        name: "a".into(),
+                        data_type: DataType::Int(None),
+                        collation: None,
+                        options: vec![ColumnOptionDef {
+                            name: None,
+                            option: ColumnOption::Tags(TagsColumnOption {
+                                with,
+                                tags: vec![
+                                    Tag::new("A".into(), "TAG A".into()),
+                                    Tag::new("B".into(), "TAG B".into()),
+                                ]
+                            }),
+                        }],
+                    },]
+                );
+            }
+            _ => unreachable!(),
+        }
+    }
+}
+
+#[test]
+fn test_snowflake_create_table_with_several_column_options() {
+    let sql = concat!(
+        "CREATE TABLE my_table (",
+        "a INT IDENTITY WITH MASKING POLICY p1 USING (a, b) WITH TAG (A='TAG A', B='TAG B'), ",
+        "b TEXT COLLATE 'de_DE' PROJECTION POLICY p2 TAG (C='TAG C', D='TAG D')",
+        ")"
+    );
+    match snowflake().verified_stmt(sql) {
+        Statement::CreateTable(CreateTable { columns, .. }) => {
+            assert_eq!(
+                columns,
+                vec![
+                    ColumnDef {
+                        name: "a".into(),
+                        data_type: DataType::Int(None),
+                        collation: None,
+                        options: vec![
+                            ColumnOptionDef {
+                                name: None,
+                                option: ColumnOption::Identity(IdentityPropertyKind::Identity(
+                                    IdentityProperty {
+                                        parameters: None,
+                                        order: None
+                                    }
+                                )),
+                            },
+                            ColumnOptionDef {
+                                name: None,
+                                option: ColumnOption::Policy(ColumnPolicy::MaskingPolicy(
+                                    ColumnPolicyProperty {
+                                        with: true,
+                                        policy_name: "p1".into(),
+                                        using_columns: Some(vec!["a".into(), "b".into()]),
+                                    }
+                                )),
+                            },
+                            ColumnOptionDef {
+                                name: None,
+                                option: ColumnOption::Tags(TagsColumnOption {
+                                    with: true,
+                                    tags: vec![
+                                        Tag::new("A".into(), "TAG A".into()),
+                                        Tag::new("B".into(), "TAG B".into()),
+                                    ]
+                                }),
+                            }
+                        ],
+                    },
+                    ColumnDef {
+                        name: "b".into(),
+                        data_type: DataType::Text,
+                        collation: Some(ObjectName(vec![Ident::with_quote('\'', "de_DE")])),
+                        options: vec![
+                            ColumnOptionDef {
+                                name: None,
+                                option: ColumnOption::Policy(ColumnPolicy::ProjectionPolicy(
+                                    ColumnPolicyProperty {
+                                        with: false,
+                                        policy_name: "p2".into(),
+                                        using_columns: None,
+                                    }
+                                )),
+                            },
+                            ColumnOptionDef {
+                                name: None,
+                                option: ColumnOption::Tags(TagsColumnOption {
+                                    with: false,
+                                    tags: vec![
+                                        Tag::new("C".into(), "TAG C".into()),
+                                        Tag::new("D".into(), "TAG D".into()),
+                                    ]
+                                }),
+                            }
+                        ],
+                    },
+                ]
+            );
+        }
+        _ => unreachable!(),
+    }
+}
+
+#[test]
 fn parse_sf_create_or_replace_view_with_comment_missing_equal() {
     assert!(snowflake_and_generic()
         .parse_sql_statements("CREATE OR REPLACE VIEW v COMMENT = 'hello, world' AS SELECT 1")
@@ -539,10 +863,8 @@ fn parse_sf_create_or_replace_view_with_comment_missing_equal() {
 #[test]
 fn parse_sf_create_or_replace_with_comment_for_snowflake() {
     let sql = "CREATE OR REPLACE VIEW v COMMENT = 'hello, world' AS SELECT 1";
-    let dialect = test_utils::TestedDialects {
-        dialects: vec![Box::new(SnowflakeDialect {}) as Box<dyn Dialect>],
-        options: None,
-    };
+    let dialect =
+        test_utils::TestedDialects::new(vec![Box::new(SnowflakeDialect {}) as Box<dyn Dialect>]);
 
     match dialect.verified_stmt(sql) {
         Statement::CreateView {
@@ -875,8 +1197,7 @@ fn parse_delimited_identifiers() {
             args,
             with_hints,
             version,
-            with_ordinality: _,
-            partitions: _,
+            ..
         } => {
             assert_eq!(vec![Ident::with_quote('"', "a table")], name.0);
             assert_eq!(Ident::with_quote('"', "alias"), alias.unwrap().name);
@@ -898,6 +1219,7 @@ fn parse_delimited_identifiers() {
     assert_eq!(
         &Expr::Function(Function {
             name: ObjectName(vec![Ident::with_quote('"', "myfun")]),
+            uses_odbc_syntax: false,
             parameters: FunctionArguments::None,
             args: FunctionArguments::List(FunctionArgumentList {
                 duplicate_treatment: None,
@@ -935,24 +1257,25 @@ fn test_array_agg_func() {
 }
 
 fn snowflake() -> TestedDialects {
-    TestedDialects {
-        dialects: vec![Box::new(SnowflakeDialect {})],
-        options: None,
-    }
+    TestedDialects::new(vec![Box::new(SnowflakeDialect {})])
+}
+
+fn snowflake_with_recursion_limit(recursion_limit: usize) -> TestedDialects {
+    TestedDialects::new(vec![Box::new(SnowflakeDialect {})]).with_recursion_limit(recursion_limit)
 }
 
 fn snowflake_without_unescape() -> TestedDialects {
-    TestedDialects {
-        dialects: vec![Box::new(SnowflakeDialect {})],
-        options: Some(ParserOptions::new().with_unescape(false)),
-    }
+    TestedDialects::new_with_options(
+        vec![Box::new(SnowflakeDialect {})],
+        ParserOptions::new().with_unescape(false),
+    )
 }
 
 fn snowflake_and_generic() -> TestedDialects {
-    TestedDialects {
-        dialects: vec![Box::new(SnowflakeDialect {}), Box::new(GenericDialect {})],
-        options: None,
-    }
+    TestedDialects::new(vec![
+        Box::new(SnowflakeDialect {}),
+        Box::new(GenericDialect {}),
+    ])
 }
 
 #[test]
@@ -1094,6 +1417,43 @@ fn test_alter_table_swap_with() {
         }
         _ => unreachable!(),
     };
+}
+
+#[test]
+fn test_alter_table_clustering() {
+    let sql = r#"ALTER TABLE tab CLUSTER BY (c1, "c2", TO_DATE(c3))"#;
+    match alter_table_op(snowflake_and_generic().verified_stmt(sql)) {
+        AlterTableOperation::ClusterBy { exprs } => {
+            assert_eq!(
+                exprs,
+                [
+                    Expr::Identifier(Ident::new("c1")),
+                    Expr::Identifier(Ident::with_quote('"', "c2")),
+                    Expr::Function(Function {
+                        name: ObjectName(vec![Ident::new("TO_DATE")]),
+                        uses_odbc_syntax: false,
+                        parameters: FunctionArguments::None,
+                        args: FunctionArguments::List(FunctionArgumentList {
+                            args: vec![FunctionArg::Unnamed(FunctionArgExpr::Expr(
+                                Expr::Identifier(Ident::new("c3"))
+                            ))],
+                            duplicate_treatment: None,
+                            clauses: vec![],
+                        }),
+                        filter: None,
+                        null_treatment: None,
+                        over: None,
+                        within_group: vec![]
+                    })
+                ],
+            );
+        }
+        _ => unreachable!(),
+    }
+
+    snowflake_and_generic().verified_stmt("ALTER TABLE tbl DROP CLUSTERING KEY");
+    snowflake_and_generic().verified_stmt("ALTER TABLE tbl SUSPEND RECLUSTER");
+    snowflake_and_generic().verified_stmt("ALTER TABLE tbl RESUME RECLUSTER");
 }
 
 #[test]
@@ -2334,7 +2694,7 @@ fn parse_use() {
     let quote_styles = ['\'', '"', '`'];
     for object_name in &valid_object_names {
         // Test single identifier without quotes
-        std::assert_eq!(
+        assert_eq!(
             snowflake().verified_stmt(&format!("USE {}", object_name)),
             Statement::Use(Use::Object(ObjectName(vec![Ident::new(
                 object_name.to_string()
@@ -2342,7 +2702,7 @@ fn parse_use() {
         );
         for &quote in &quote_styles {
             // Test single identifier with different type of quotes
-            std::assert_eq!(
+            assert_eq!(
                 snowflake().verified_stmt(&format!("USE {}{}{}", quote, object_name, quote)),
                 Statement::Use(Use::Object(ObjectName(vec![Ident::with_quote(
                     quote,
@@ -2354,7 +2714,7 @@ fn parse_use() {
 
     for &quote in &quote_styles {
         // Test double identifier with different type of quotes
-        std::assert_eq!(
+        assert_eq!(
             snowflake().verified_stmt(&format!("USE {0}CATALOG{0}.{0}my_schema{0}", quote)),
             Statement::Use(Use::Object(ObjectName(vec![
                 Ident::with_quote(quote, "CATALOG"),
@@ -2363,7 +2723,7 @@ fn parse_use() {
         );
     }
     // Test double identifier without quotes
-    std::assert_eq!(
+    assert_eq!(
         snowflake().verified_stmt("USE mydb.my_schema"),
         Statement::Use(Use::Object(ObjectName(vec![
             Ident::new("mydb"),
@@ -2373,35 +2733,253 @@ fn parse_use() {
 
     for &quote in &quote_styles {
         // Test single and double identifier with keyword and different type of quotes
-        std::assert_eq!(
+        assert_eq!(
             snowflake().verified_stmt(&format!("USE DATABASE {0}my_database{0}", quote)),
             Statement::Use(Use::Database(ObjectName(vec![Ident::with_quote(
                 quote,
                 "my_database".to_string(),
             )])))
         );
-        std::assert_eq!(
+        assert_eq!(
             snowflake().verified_stmt(&format!("USE SCHEMA {0}my_schema{0}", quote)),
             Statement::Use(Use::Schema(ObjectName(vec![Ident::with_quote(
                 quote,
                 "my_schema".to_string(),
             )])))
         );
-        std::assert_eq!(
+        assert_eq!(
             snowflake().verified_stmt(&format!("USE SCHEMA {0}CATALOG{0}.{0}my_schema{0}", quote)),
             Statement::Use(Use::Schema(ObjectName(vec![
                 Ident::with_quote(quote, "CATALOG"),
                 Ident::with_quote(quote, "my_schema")
             ])))
         );
+        assert_eq!(
+            snowflake().verified_stmt(&format!("USE ROLE {0}my_role{0}", quote)),
+            Statement::Use(Use::Role(ObjectName(vec![Ident::with_quote(
+                quote,
+                "my_role".to_string(),
+            )])))
+        );
+        assert_eq!(
+            snowflake().verified_stmt(&format!("USE WAREHOUSE {0}my_wh{0}", quote)),
+            Statement::Use(Use::Warehouse(ObjectName(vec![Ident::with_quote(
+                quote,
+                "my_wh".to_string(),
+            )])))
+        );
     }
 
     // Test invalid syntax - missing identifier
     let invalid_cases = ["USE SCHEMA", "USE DATABASE", "USE WAREHOUSE"];
     for sql in &invalid_cases {
-        std::assert_eq!(
+        assert_eq!(
             snowflake().parse_sql_statements(sql).unwrap_err(),
             ParserError::ParserError("Expected: identifier, found: EOF".to_string()),
         );
     }
+
+    snowflake().verified_stmt("USE SECONDARY ROLES ALL");
+    snowflake().verified_stmt("USE SECONDARY ROLES NONE");
+    snowflake().verified_stmt("USE SECONDARY ROLES r1, r2, r3");
+}
+
+#[test]
+fn view_comment_option_should_be_after_column_list() {
+    for sql in [
+        "CREATE OR REPLACE VIEW v (a) COMMENT = 'Comment' AS SELECT a FROM t",
+        "CREATE OR REPLACE VIEW v (a COMMENT 'a comment', b, c COMMENT 'c comment') COMMENT = 'Comment' AS SELECT a FROM t",
+        "CREATE OR REPLACE VIEW v (a COMMENT 'a comment', b, c COMMENT 'c comment') WITH (foo = bar) COMMENT = 'Comment' AS SELECT a FROM t",
+    ] {
+        snowflake_and_generic()
+            .verified_stmt(sql);
+    }
+}
+
+#[test]
+fn parse_view_column_descriptions() {
+    let sql = "CREATE OR REPLACE VIEW v (a COMMENT 'Comment', b) AS SELECT a, b FROM table1";
+
+    match snowflake_and_generic().verified_stmt(sql) {
+        Statement::CreateView { name, columns, .. } => {
+            assert_eq!(name.to_string(), "v");
+            assert_eq!(
+                columns,
+                vec![
+                    ViewColumnDef {
+                        name: Ident::new("a"),
+                        data_type: None,
+                        options: Some(vec![ColumnOption::Comment("Comment".to_string())]),
+                    },
+                    ViewColumnDef {
+                        name: Ident::new("b"),
+                        data_type: None,
+                        options: None,
+                    }
+                ]
+            );
+        }
+        _ => unreachable!(),
+    };
+}
+
+#[test]
+fn test_parentheses_overflow() {
+    // TODO: increase / improve after we fix the recursion limit
+    // for real (see https://github.com/apache/datafusion-sqlparser-rs/issues/984)
+    let max_nesting_level: usize = 25;
+
+    // Verify the recursion check is not too wasteful... (num of parentheses - 2 is acceptable)
+    let slack = 2;
+    let l_parens = "(".repeat(max_nesting_level - slack);
+    let r_parens = ")".repeat(max_nesting_level - slack);
+    let sql = format!("SELECT * FROM {l_parens}a.b.c{r_parens}");
+    let parsed =
+        snowflake_with_recursion_limit(max_nesting_level).parse_sql_statements(sql.as_str());
+    assert_eq!(parsed.err(), None);
+
+    // Verify the recursion check triggers... (num of parentheses - 1 is acceptable)
+    let slack = 1;
+    let l_parens = "(".repeat(max_nesting_level - slack);
+    let r_parens = ")".repeat(max_nesting_level - slack);
+    let sql = format!("SELECT * FROM {l_parens}a.b.c{r_parens}");
+    let parsed =
+        snowflake_with_recursion_limit(max_nesting_level).parse_sql_statements(sql.as_str());
+    assert_eq!(parsed.err(), Some(ParserError::RecursionLimitExceeded));
+}
+
+#[test]
+fn test_show_databases() {
+    snowflake().verified_stmt("SHOW DATABASES");
+    snowflake().verified_stmt("SHOW DATABASES HISTORY");
+    snowflake().verified_stmt("SHOW DATABASES LIKE '%abc%'");
+    snowflake().verified_stmt("SHOW DATABASES STARTS WITH 'demo_db'");
+    snowflake().verified_stmt("SHOW DATABASES LIMIT 12");
+    snowflake()
+        .verified_stmt("SHOW DATABASES HISTORY LIKE '%aa' STARTS WITH 'demo' LIMIT 20 FROM 'abc'");
+    snowflake().verified_stmt("SHOW DATABASES IN ACCOUNT abc");
+}
+
+#[test]
+fn test_parse_show_schemas() {
+    snowflake().verified_stmt("SHOW SCHEMAS");
+    snowflake().verified_stmt("SHOW SCHEMAS IN ACCOUNT");
+    snowflake().verified_stmt("SHOW SCHEMAS IN ACCOUNT abc");
+    snowflake().verified_stmt("SHOW SCHEMAS IN DATABASE");
+    snowflake().verified_stmt("SHOW SCHEMAS IN DATABASE xyz");
+    snowflake().verified_stmt("SHOW SCHEMAS HISTORY LIKE '%xa%'");
+    snowflake().verified_stmt("SHOW SCHEMAS STARTS WITH 'abc' LIMIT 20");
+    snowflake().verified_stmt("SHOW SCHEMAS IN DATABASE STARTS WITH 'abc' LIMIT 20 FROM 'xyz'");
+}
+
+#[test]
+fn test_parse_show_tables() {
+    snowflake().verified_stmt("SHOW TABLES");
+    snowflake().verified_stmt("SHOW TABLES IN ACCOUNT");
+    snowflake().verified_stmt("SHOW TABLES IN DATABASE");
+    snowflake().verified_stmt("SHOW TABLES IN DATABASE xyz");
+    snowflake().verified_stmt("SHOW TABLES IN SCHEMA");
+    snowflake().verified_stmt("SHOW TABLES IN SCHEMA xyz");
+    snowflake().verified_stmt("SHOW TABLES HISTORY LIKE '%xa%'");
+    snowflake().verified_stmt("SHOW TABLES STARTS WITH 'abc' LIMIT 20");
+    snowflake().verified_stmt("SHOW TABLES IN SCHEMA STARTS WITH 'abc' LIMIT 20 FROM 'xyz'");
+    snowflake().verified_stmt("SHOW EXTERNAL TABLES");
+    snowflake().verified_stmt("SHOW EXTERNAL TABLES IN ACCOUNT");
+    snowflake().verified_stmt("SHOW EXTERNAL TABLES IN DATABASE");
+    snowflake().verified_stmt("SHOW EXTERNAL TABLES IN DATABASE xyz");
+    snowflake().verified_stmt("SHOW EXTERNAL TABLES IN SCHEMA");
+    snowflake().verified_stmt("SHOW EXTERNAL TABLES IN SCHEMA xyz");
+    snowflake().verified_stmt("SHOW EXTERNAL TABLES STARTS WITH 'abc' LIMIT 20");
+    snowflake()
+        .verified_stmt("SHOW EXTERNAL TABLES IN SCHEMA STARTS WITH 'abc' LIMIT 20 FROM 'xyz'");
+}
+
+#[test]
+fn test_show_views() {
+    snowflake().verified_stmt("SHOW VIEWS");
+    snowflake().verified_stmt("SHOW VIEWS IN ACCOUNT");
+    snowflake().verified_stmt("SHOW VIEWS IN DATABASE");
+    snowflake().verified_stmt("SHOW VIEWS IN DATABASE xyz");
+    snowflake().verified_stmt("SHOW VIEWS IN SCHEMA");
+    snowflake().verified_stmt("SHOW VIEWS IN SCHEMA xyz");
+    snowflake().verified_stmt("SHOW VIEWS STARTS WITH 'abc' LIMIT 20");
+    snowflake().verified_stmt("SHOW VIEWS IN SCHEMA STARTS WITH 'abc' LIMIT 20 FROM 'xyz'");
+}
+
+#[test]
+fn test_parse_show_columns_sql() {
+    snowflake().verified_stmt("SHOW COLUMNS IN TABLE");
+    snowflake().verified_stmt("SHOW COLUMNS IN TABLE abc");
+    snowflake().verified_stmt("SHOW COLUMNS LIKE '%xyz%' IN TABLE abc");
+}
+
+#[test]
+fn test_projection_with_nested_trailing_commas() {
+    let sql = "SELECT a, FROM b, LATERAL FLATTEN(input => events)";
+    let _ = snowflake().parse_sql_statements(sql).unwrap();
+
+    //Single nesting
+    let sql = "SELECT (SELECT a, FROM b, LATERAL FLATTEN(input => events))";
+    let _ = snowflake().parse_sql_statements(sql).unwrap();
+
+    //Double nesting
+    let sql = "SELECT (SELECT (SELECT a, FROM b, LATERAL FLATTEN(input => events)))";
+    let _ = snowflake().parse_sql_statements(sql).unwrap();
+
+    let sql = "SELECT a, b, FROM c, (SELECT d, e, FROM f, LATERAL FLATTEN(input => events))";
+    let _ = snowflake().parse_sql_statements(sql).unwrap();
+}
+
+#[test]
+fn test_sf_double_dot_notation() {
+    snowflake().verified_stmt("SELECT * FROM db_name..table_name");
+    snowflake().verified_stmt("SELECT * FROM x, y..z JOIN a..b AS b ON x.id = b.id");
+
+    assert_eq!(
+        snowflake()
+            .parse_sql_statements("SELECT * FROM X.Y..")
+            .unwrap_err()
+            .to_string(),
+        "sql parser error: Expected: identifier, found: ."
+    );
+    assert_eq!(
+        snowflake()
+            .parse_sql_statements("SELECT * FROM X..Y..Z")
+            .unwrap_err()
+            .to_string(),
+        "sql parser error: Expected: identifier, found: ."
+    );
+    assert_eq!(
+        // Ensure we don't parse leading token
+        snowflake()
+            .parse_sql_statements("SELECT * FROM .X.Y")
+            .unwrap_err()
+            .to_string(),
+        "sql parser error: Expected: identifier, found: ."
+    );
+}
+
+#[test]
+fn test_parse_double_dot_notation_wrong_position() {}
+
+#[test]
+fn parse_insert_overwrite() {
+    let insert_overwrite_into = r#"INSERT OVERWRITE INTO schema.table SELECT a FROM b"#;
+    snowflake().verified_stmt(insert_overwrite_into);
+}
+
+#[test]
+fn test_table_sample() {
+    snowflake_and_generic().verified_stmt("SELECT * FROM testtable SAMPLE (10)");
+    snowflake_and_generic().verified_stmt("SELECT * FROM testtable TABLESAMPLE (10)");
+    snowflake_and_generic()
+        .verified_stmt("SELECT * FROM testtable AS t TABLESAMPLE BERNOULLI (10)");
+    snowflake_and_generic().verified_stmt("SELECT * FROM testtable AS t TABLESAMPLE ROW (10)");
+    snowflake_and_generic().verified_stmt("SELECT * FROM testtable AS t TABLESAMPLE ROW (10 ROWS)");
+    snowflake_and_generic()
+        .verified_stmt("SELECT * FROM testtable TABLESAMPLE BLOCK (3) SEED (82)");
+    snowflake_and_generic()
+        .verified_stmt("SELECT * FROM testtable TABLESAMPLE SYSTEM (3) REPEATABLE (82)");
+    snowflake_and_generic().verified_stmt("SELECT id FROM mytable TABLESAMPLE (10) REPEATABLE (1)");
+    snowflake_and_generic().verified_stmt("SELECT id FROM mytable TABLESAMPLE (10) SEED (1)");
 }

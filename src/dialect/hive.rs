@@ -51,4 +51,19 @@ impl Dialect for HiveDialect {
     fn require_interval_qualifier(&self) -> bool {
         true
     }
+
+    /// See Hive <https://cwiki.apache.org/confluence/pages/viewpage.action?pageId=27362061#Tutorial-BuiltInOperators>
+    fn supports_bang_not_operator(&self) -> bool {
+        true
+    }
+
+    /// See Hive <https://cwiki.apache.org/confluence/pages/viewpage.action?pageId=27362036#LanguageManualDML-Loadingfilesintotables>
+    fn supports_load_data(&self) -> bool {
+        true
+    }
+
+    /// See Hive <https://cwiki.apache.org/confluence/display/hive/languagemanual+sampling>
+    fn supports_table_sample_before_alias(&self) -> bool {
+        true
+    }
 }

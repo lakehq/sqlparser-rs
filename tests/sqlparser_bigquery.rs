@@ -23,6 +23,7 @@ use std::ops::Deref;
 use sqlparser::ast::*;
 use sqlparser::dialect::{BigQueryDialect, GenericDialect};
 use sqlparser::parser::{ParserError, ParserOptions};
+use sqlparser::tokenizer::Span;
 use test_utils::*;
 
 #[test]
@@ -40,10 +41,10 @@ fn parse_literal_string() {
         r#""""triple-double\"escaped""", "#,
         r#""""triple-double"unescaped""""#,
     );
-    let dialect = TestedDialects {
-        dialects: vec![Box::new(BigQueryDialect {})],
-        options: Some(ParserOptions::new().with_unescape(false)),
-    };
+    let dialect = TestedDialects::new_with_options(
+        vec![Box::new(BigQueryDialect {})],
+        ParserOptions::new().with_unescape(false),
+    );
     let select = dialect.verified_only_select(sql);
     assert_eq!(10, select.projection.len());
     assert_eq!(
@@ -221,15 +222,7 @@ fn parse_delete_statement() {
             ..
         }) => {
             assert_eq!(
-                TableFactor::Table {
-                    name: ObjectName(vec![Ident::with_quote('"', "table")]),
-                    alias: None,
-                    args: None,
-                    with_hints: vec![],
-                    version: None,
-                    partitions: vec![],
-                    with_ordinality: false,
-                },
+                table_from_name(ObjectName(vec![Ident::with_quote('"', "table")])),
                 from[0].relation
             );
         }
@@ -272,10 +265,10 @@ fn parse_create_view_with_options() {
                     ViewColumnDef {
                         name: Ident::new("age"),
                         data_type: None,
-                        options: Some(vec![SqlOption::KeyValue {
+                        options: Some(vec![ColumnOption::Options(vec![SqlOption::KeyValue {
                             key: Ident::new("description"),
                             value: Expr::Value(Value::DoubleQuotedString("field age".to_string())),
-                        }])
+                        }])]),
                     },
                 ],
                 columns
@@ -685,10 +678,12 @@ fn parse_typed_struct_syntax_bigquery() {
                     Ident {
                         value: "t".into(),
                         quote_style: None,
+                        span: Span::empty(),
                     },
                     Ident {
                         value: "str_col".into(),
                         quote_style: None,
+                        span: Span::empty(),
                     },
                 ]),
             ],
@@ -697,6 +692,7 @@ fn parse_typed_struct_syntax_bigquery() {
                     field_name: Some(Ident {
                         value: "x".into(),
                         quote_style: None,
+                        span: Span::empty(),
                     }),
                     field_type: DataType::Int64,
                     not_null: false,
@@ -706,6 +702,7 @@ fn parse_typed_struct_syntax_bigquery() {
                     field_name: Some(Ident {
                         value: "y".into(),
                         quote_style: None,
+                        span: Span::empty(),
                     }),
                     field_type: DataType::String(None),
                     not_null: false,
@@ -720,6 +717,7 @@ fn parse_typed_struct_syntax_bigquery() {
             values: vec![Expr::Identifier(Ident {
                 value: "nested_col".into(),
                 quote_style: None,
+                span: Span::empty(),
             }),],
             fields: vec![
                 StructField {
@@ -757,6 +755,7 @@ fn parse_typed_struct_syntax_bigquery() {
             values: vec![Expr::Identifier(Ident {
                 value: "nested_col".into(),
                 quote_style: None,
+                span: Span::empty(),
             }),],
             fields: vec![
                 StructField {
@@ -1047,10 +1046,12 @@ fn parse_typed_struct_syntax_bigquery_and_generic() {
                     Ident {
                         value: "t".into(),
                         quote_style: None,
+                        span: Span::empty(),
                     },
                     Ident {
                         value: "str_col".into(),
                         quote_style: None,
+                        span: Span::empty(),
                     },
                 ]),
             ],
@@ -1059,6 +1060,7 @@ fn parse_typed_struct_syntax_bigquery_and_generic() {
                     field_name: Some(Ident {
                         value: "x".into(),
                         quote_style: None,
+                        span: Span::empty(),
                     }),
                     field_type: DataType::Int64,
                     not_null: false,
@@ -1068,6 +1070,7 @@ fn parse_typed_struct_syntax_bigquery_and_generic() {
                     field_name: Some(Ident {
                         value: "y".into(),
                         quote_style: None,
+                        span: Span::empty(),
                     }),
                     field_type: DataType::String(None),
                     not_null: false,
@@ -1082,6 +1085,7 @@ fn parse_typed_struct_syntax_bigquery_and_generic() {
             values: vec![Expr::Identifier(Ident {
                 value: "nested_col".into(),
                 quote_style: None,
+                span: Span::empty(),
             }),],
             fields: vec![
                 StructField {
@@ -1119,6 +1123,7 @@ fn parse_typed_struct_syntax_bigquery_and_generic() {
             values: vec![Expr::Identifier(Ident {
                 value: "nested_col".into(),
                 quote_style: None,
+                span: Span::empty(),
             }),],
             fields: vec![
                 StructField {
@@ -1489,15 +1494,7 @@ fn parse_table_identifiers() {
         assert_eq!(
             select.from,
             vec![TableWithJoins {
-                relation: TableFactor::Table {
-                    name: ObjectName(expected),
-                    alias: None,
-                    args: None,
-                    with_hints: vec![],
-                    version: None,
-                    partitions: vec![],
-                    with_ordinality: false,
-                },
+                relation: table_from_name(ObjectName(expected)),
                 joins: vec![]
             },]
         );
@@ -1634,6 +1631,17 @@ fn parse_hyphenated_table_identifiers() {
     assert_eq!(
         bigquery()
             .verified_only_select_with_canonical(
+                "select * from foo-123.bar",
+                "SELECT * FROM foo-123.bar"
+            )
+            .from[0]
+            .relation,
+        table_from_name(ObjectName(vec![Ident::new("foo-123"), Ident::new("bar")])),
+    );
+
+    assert_eq!(
+        bigquery()
+            .verified_only_select_with_canonical(
                 "SELECT foo-bar.x FROM t",
                 "SELECT foo - bar.x FROM t"
             )
@@ -1670,6 +1678,8 @@ fn parse_table_time_travel() {
                 ))),
                 partitions: vec![],
                 with_ordinality: false,
+                json_path: None,
+                sample: None,
             },
             joins: vec![]
         },]
@@ -1768,6 +1778,8 @@ fn parse_merge() {
                     version: Default::default(),
                     partitions: Default::default(),
                     with_ordinality: false,
+                    json_path: None,
+                    sample: None,
                 },
                 table
             );
@@ -1783,6 +1795,8 @@ fn parse_merge() {
                     version: Default::default(),
                     partitions: Default::default(),
                     with_ordinality: false,
+                    json_path: None,
+                    sample: None,
                 },
                 source
             );
@@ -2060,17 +2074,14 @@ fn parse_big_query_declare() {
 }
 
 fn bigquery() -> TestedDialects {
-    TestedDialects {
-        dialects: vec![Box::new(BigQueryDialect {})],
-        options: None,
-    }
+    TestedDialects::new(vec![Box::new(BigQueryDialect {})])
 }
 
 fn bigquery_and_generic() -> TestedDialects {
-    TestedDialects {
-        dialects: vec![Box::new(BigQueryDialect {}), Box::new(GenericDialect {})],
-        options: None,
-    }
+    TestedDialects::new(vec![
+        Box::new(BigQueryDialect {}),
+        Box::new(GenericDialect {}),
+    ])
 }
 
 #[test]
@@ -2120,7 +2131,7 @@ fn test_bigquery_create_function() {
     let stmt = bigquery().verified_stmt(sql);
     assert_eq!(
         stmt,
-        Statement::CreateFunction {
+        Statement::CreateFunction(CreateFunction {
             or_replace: true,
             temporary: true,
             if_not_exists: false,
@@ -2145,7 +2156,7 @@ fn test_bigquery_create_function() {
             remote_connection: None,
             called_on_null: None,
             parallel: None,
-        }
+        })
     );
 
     let sqls = [
@@ -2320,4 +2331,20 @@ fn test_any_value() {
     );
     bigquery_and_generic().verified_expr("ANY_VALUE(fruit HAVING MAX sold)");
     bigquery_and_generic().verified_expr("ANY_VALUE(fruit HAVING MIN sold)");
+}
+
+#[test]
+fn test_any_type() {
+    bigquery().verified_stmt(concat!(
+        "CREATE OR REPLACE TEMPORARY FUNCTION ",
+        "my_function(param1 ANY TYPE) ",
+        "AS (",
+        "(SELECT 1)",
+        ")",
+    ));
+}
+
+#[test]
+fn test_any_type_dont_break_custom_type() {
+    bigquery_and_generic().verified_stmt("CREATE TABLE foo (x ANY)");
 }

@@ -28,7 +28,7 @@
 // limitations under the License.
 use log::debug;
 
-use crate::ast::{CommentObject, Statement};
+use crate::ast::{ObjectName, Statement, UserDefinedTypeRepresentation};
 use crate::dialect::{Dialect, Precedence};
 use crate::keywords::Keyword;
 use crate::parser::{Parser, ParserError};
@@ -136,8 +136,9 @@ impl Dialect for PostgreSqlDialect {
     }
 
     fn parse_statement(&self, parser: &mut Parser) -> Option<Result<Statement, ParserError>> {
-        if parser.parse_keyword(Keyword::COMMENT) {
-            Some(parse_comment(parser))
+        if parser.parse_keyword(Keyword::CREATE) {
+            parser.prev_token(); // unconsume the CREATE in case we don't end up parsing anything
+            parse_create(parser)
         } else {
             None
         }
@@ -188,36 +189,80 @@ impl Dialect for PostgreSqlDialect {
     fn supports_explain_with_utility_options(&self) -> bool {
         true
     }
+
+    /// see <https://www.postgresql.org/docs/current/sql-listen.html>
+    /// see <https://www.postgresql.org/docs/current/sql-unlisten.html>
+    /// see <https://www.postgresql.org/docs/current/sql-notify.html>
+    fn supports_listen_notify(&self) -> bool {
+        true
+    }
+
+    /// see <https://www.postgresql.org/docs/13/functions-math.html>
+    fn supports_factorial_operator(&self) -> bool {
+        true
+    }
+
+    /// see <https://www.postgresql.org/docs/current/sql-comment.html>
+    fn supports_comment_on(&self) -> bool {
+        true
+    }
+
+    /// See <https://www.postgresql.org/docs/current/sql-load.html>
+    fn supports_load_extension(&self) -> bool {
+        true
+    }
+
+    /// See <https://www.postgresql.org/docs/current/functions-json.html>
+    ///
+    /// Required to support the colon in:
+    /// ```sql
+    /// SELECT json_object('a': 'b')
+    /// ```
+    fn supports_named_fn_args_with_colon_operator(&self) -> bool {
+        true
+    }
+
+    /// See <https://www.postgresql.org/docs/current/functions-json.html>
+    ///
+    /// Required to support the label in:
+    /// ```sql
+    /// SELECT json_object('label': 'value')
+    /// ```
+    fn supports_named_fn_args_with_expr_name(&self) -> bool {
+        true
+    }
 }
 
-pub fn parse_comment(parser: &mut Parser) -> Result<Statement, ParserError> {
-    let if_exists = parser.parse_keywords(&[Keyword::IF, Keyword::EXISTS]);
+pub fn parse_create(parser: &mut Parser) -> Option<Result<Statement, ParserError>> {
+    let name = parser.maybe_parse(|parser| -> Result<ObjectName, ParserError> {
+        parser.expect_keyword(Keyword::CREATE)?;
+        parser.expect_keyword(Keyword::TYPE)?;
+        let name = parser.parse_object_name(false)?;
+        parser.expect_keyword(Keyword::AS)?;
+        parser.expect_keyword(Keyword::ENUM)?;
+        Ok(name)
+    });
 
-    parser.expect_keyword(Keyword::ON)?;
-    let token = parser.next_token();
+    match name {
+        Ok(name) => name.map(|name| parse_create_type_as_enum(parser, name)),
+        Err(e) => Some(Err(e)),
+    }
+}
 
-    let (object_type, object_name) = match token.token {
-        Token::Word(w) if w.keyword == Keyword::COLUMN => {
-            let object_name = parser.parse_object_name(false)?;
-            (CommentObject::Column, object_name)
-        }
-        Token::Word(w) if w.keyword == Keyword::TABLE => {
-            let object_name = parser.parse_object_name(false)?;
-            (CommentObject::Table, object_name)
-        }
-        _ => parser.expected("comment object_type", token)?,
-    };
+// https://www.postgresql.org/docs/current/sql-createtype.html
+pub fn parse_create_type_as_enum(
+    parser: &mut Parser,
+    name: ObjectName,
+) -> Result<Statement, ParserError> {
+    if !parser.consume_token(&Token::LParen) {
+        return parser.expected("'(' after CREATE TYPE AS ENUM", parser.peek_token());
+    }
 
-    parser.expect_keyword(Keyword::IS)?;
-    let comment = if parser.parse_keyword(Keyword::NULL) {
-        None
-    } else {
-        Some(parser.parse_literal_string()?)
-    };
-    Ok(Statement::Comment {
-        object_type,
-        object_name,
-        comment,
-        if_exists,
+    let labels = parser.parse_comma_separated0(|p| p.parse_identifier(false), Token::RParen)?;
+    parser.expect_token(&Token::RParen)?;
+
+    Ok(Statement::CreateType {
+        name,
+        representation: UserDefinedTypeRepresentation::Enum { labels },
     })
 }

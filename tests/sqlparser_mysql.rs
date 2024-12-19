@@ -19,12 +19,14 @@
 //! Test SQL syntax specific to MySQL. The parser based on the generic dialect
 //! is also tested (on the inputs it can handle).
 
+use helpers::attached_token::AttachedToken;
 use matches::assert_matches;
 
 use sqlparser::ast::MysqlInsertPriority::{Delayed, HighPriority, LowPriority};
 use sqlparser::ast::*;
 use sqlparser::dialect::{GenericDialect, MySqlDialect};
 use sqlparser::parser::{ParserError, ParserOptions};
+use sqlparser::tokenizer::Span;
 use sqlparser::tokenizer::Token;
 use test_utils::*;
 
@@ -142,16 +144,19 @@ fn parse_flush() {
                 ObjectName(vec![
                     Ident {
                         value: "mek".to_string(),
-                        quote_style: Some('`')
+                        quote_style: Some('`'),
+                        span: Span::empty(),
                     },
                     Ident {
                         value: "table1".to_string(),
-                        quote_style: Some('`')
+                        quote_style: Some('`'),
+                        span: Span::empty(),
                     }
                 ]),
                 ObjectName(vec![Ident {
                     value: "table2".to_string(),
-                    quote_style: None
+                    quote_style: None,
+                    span: Span::empty(),
                 }])
             ]
         }
@@ -179,16 +184,19 @@ fn parse_flush() {
                 ObjectName(vec![
                     Ident {
                         value: "mek".to_string(),
-                        quote_style: Some('`')
+                        quote_style: Some('`'),
+                        span: Span::empty(),
                     },
                     Ident {
                         value: "table1".to_string(),
-                        quote_style: Some('`')
+                        quote_style: Some('`'),
+                        span: Span::empty(),
                     }
                 ]),
                 ObjectName(vec![Ident {
                     value: "table2".to_string(),
-                    quote_style: None
+                    quote_style: None,
+                    span: Span::empty(),
                 }])
             ]
         }
@@ -205,16 +213,19 @@ fn parse_flush() {
                 ObjectName(vec![
                     Ident {
                         value: "mek".to_string(),
-                        quote_style: Some('`')
+                        quote_style: Some('`'),
+                        span: Span::empty(),
                     },
                     Ident {
                         value: "table1".to_string(),
-                        quote_style: Some('`')
+                        quote_style: Some('`'),
+                        span: Span::empty(),
                     }
                 ]),
                 ObjectName(vec![Ident {
                     value: "table2".to_string(),
-                    quote_style: None
+                    quote_style: None,
+                    span: Span::empty(),
                 }])
             ]
         }
@@ -223,14 +234,22 @@ fn parse_flush() {
 
 #[test]
 fn parse_show_columns() {
-    let table_name = ObjectName(vec![Ident::new("mytable")]);
     assert_eq!(
         mysql_and_generic().verified_stmt("SHOW COLUMNS FROM mytable"),
         Statement::ShowColumns {
             extended: false,
             full: false,
-            table_name: table_name.clone(),
-            filter: None,
+            show_options: ShowStatementOptions {
+                show_in: Some(ShowStatementIn {
+                    clause: ShowStatementInClause::FROM,
+                    parent_type: None,
+                    parent_name: Some(ObjectName(vec![Ident::new("mytable")])),
+                }),
+                filter_position: None,
+                limit_from: None,
+                limit: None,
+                starts_with: None,
+            }
         }
     );
     assert_eq!(
@@ -238,8 +257,17 @@ fn parse_show_columns() {
         Statement::ShowColumns {
             extended: false,
             full: false,
-            table_name: ObjectName(vec![Ident::new("mydb"), Ident::new("mytable")]),
-            filter: None,
+            show_options: ShowStatementOptions {
+                show_in: Some(ShowStatementIn {
+                    clause: ShowStatementInClause::FROM,
+                    parent_type: None,
+                    parent_name: Some(ObjectName(vec![Ident::new("mydb"), Ident::new("mytable")])),
+                }),
+                filter_position: None,
+                limit_from: None,
+                limit: None,
+                starts_with: None,
+            }
         }
     );
     assert_eq!(
@@ -247,8 +275,17 @@ fn parse_show_columns() {
         Statement::ShowColumns {
             extended: true,
             full: false,
-            table_name: table_name.clone(),
-            filter: None,
+            show_options: ShowStatementOptions {
+                show_in: Some(ShowStatementIn {
+                    clause: ShowStatementInClause::FROM,
+                    parent_type: None,
+                    parent_name: Some(ObjectName(vec![Ident::new("mytable")])),
+                }),
+                filter_position: None,
+                limit_from: None,
+                limit: None,
+                starts_with: None,
+            }
         }
     );
     assert_eq!(
@@ -256,8 +293,17 @@ fn parse_show_columns() {
         Statement::ShowColumns {
             extended: false,
             full: true,
-            table_name: table_name.clone(),
-            filter: None,
+            show_options: ShowStatementOptions {
+                show_in: Some(ShowStatementIn {
+                    clause: ShowStatementInClause::FROM,
+                    parent_type: None,
+                    parent_name: Some(ObjectName(vec![Ident::new("mytable")])),
+                }),
+                filter_position: None,
+                limit_from: None,
+                limit: None,
+                starts_with: None,
+            }
         }
     );
     assert_eq!(
@@ -265,8 +311,19 @@ fn parse_show_columns() {
         Statement::ShowColumns {
             extended: false,
             full: false,
-            table_name: table_name.clone(),
-            filter: Some(ShowStatementFilter::Like("pattern".into())),
+            show_options: ShowStatementOptions {
+                show_in: Some(ShowStatementIn {
+                    clause: ShowStatementInClause::FROM,
+                    parent_type: None,
+                    parent_name: Some(ObjectName(vec![Ident::new("mytable")])),
+                }),
+                filter_position: Some(ShowStatementFilterPosition::Suffix(
+                    ShowStatementFilter::Like("pattern".into())
+                )),
+                limit_from: None,
+                limit: None,
+                starts_with: None,
+            }
         }
     );
     assert_eq!(
@@ -274,18 +331,27 @@ fn parse_show_columns() {
         Statement::ShowColumns {
             extended: false,
             full: false,
-            table_name,
-            filter: Some(ShowStatementFilter::Where(
-                mysql_and_generic().verified_expr("1 = 2")
-            )),
+            show_options: ShowStatementOptions {
+                show_in: Some(ShowStatementIn {
+                    clause: ShowStatementInClause::FROM,
+                    parent_type: None,
+                    parent_name: Some(ObjectName(vec![Ident::new("mytable")])),
+                }),
+                filter_position: Some(ShowStatementFilterPosition::Suffix(
+                    ShowStatementFilter::Where(mysql_and_generic().verified_expr("1 = 2"))
+                )),
+                limit_from: None,
+                limit: None,
+                starts_with: None,
+            }
         }
     );
     mysql_and_generic()
         .one_statement_parses_to("SHOW FIELDS FROM mytable", "SHOW COLUMNS FROM mytable");
     mysql_and_generic()
-        .one_statement_parses_to("SHOW COLUMNS IN mytable", "SHOW COLUMNS FROM mytable");
+        .one_statement_parses_to("SHOW COLUMNS IN mytable", "SHOW COLUMNS IN mytable");
     mysql_and_generic()
-        .one_statement_parses_to("SHOW FIELDS IN mytable", "SHOW COLUMNS FROM mytable");
+        .one_statement_parses_to("SHOW FIELDS IN mytable", "SHOW COLUMNS IN mytable");
     mysql_and_generic().one_statement_parses_to(
         "SHOW COLUMNS FROM mytable FROM mydb",
         "SHOW COLUMNS FROM mydb.mytable",
@@ -327,60 +393,115 @@ fn parse_show_tables() {
     assert_eq!(
         mysql_and_generic().verified_stmt("SHOW TABLES"),
         Statement::ShowTables {
+            terse: false,
+            history: false,
             extended: false,
             full: false,
-            db_name: None,
-            filter: None,
+            external: false,
+            show_options: ShowStatementOptions {
+                starts_with: None,
+                limit: None,
+                limit_from: None,
+                show_in: None,
+                filter_position: None
+            }
         }
     );
     assert_eq!(
         mysql_and_generic().verified_stmt("SHOW TABLES FROM mydb"),
         Statement::ShowTables {
+            terse: false,
+            history: false,
             extended: false,
             full: false,
-            db_name: Some(Ident::new("mydb")),
-            filter: None,
+            external: false,
+            show_options: ShowStatementOptions {
+                starts_with: None,
+                limit: None,
+                limit_from: None,
+                show_in: Some(ShowStatementIn {
+                    clause: ShowStatementInClause::FROM,
+                    parent_type: None,
+                    parent_name: Some(ObjectName(vec![Ident::new("mydb")])),
+                }),
+                filter_position: None
+            }
         }
     );
     assert_eq!(
         mysql_and_generic().verified_stmt("SHOW EXTENDED TABLES"),
         Statement::ShowTables {
+            terse: false,
+            history: false,
             extended: true,
             full: false,
-            db_name: None,
-            filter: None,
+            external: false,
+            show_options: ShowStatementOptions {
+                starts_with: None,
+                limit: None,
+                limit_from: None,
+                show_in: None,
+                filter_position: None
+            }
         }
     );
     assert_eq!(
         mysql_and_generic().verified_stmt("SHOW FULL TABLES"),
         Statement::ShowTables {
+            terse: false,
+            history: false,
             extended: false,
             full: true,
-            db_name: None,
-            filter: None,
+            external: false,
+            show_options: ShowStatementOptions {
+                starts_with: None,
+                limit: None,
+                limit_from: None,
+                show_in: None,
+                filter_position: None
+            }
         }
     );
     assert_eq!(
         mysql_and_generic().verified_stmt("SHOW TABLES LIKE 'pattern'"),
         Statement::ShowTables {
+            terse: false,
+            history: false,
             extended: false,
             full: false,
-            db_name: None,
-            filter: Some(ShowStatementFilter::Like("pattern".into())),
+            external: false,
+            show_options: ShowStatementOptions {
+                starts_with: None,
+                limit: None,
+                limit_from: None,
+                show_in: None,
+                filter_position: Some(ShowStatementFilterPosition::Suffix(
+                    ShowStatementFilter::Like("pattern".into())
+                ))
+            }
         }
     );
     assert_eq!(
         mysql_and_generic().verified_stmt("SHOW TABLES WHERE 1 = 2"),
         Statement::ShowTables {
+            terse: false,
+            history: false,
             extended: false,
             full: false,
-            db_name: None,
-            filter: Some(ShowStatementFilter::Where(
-                mysql_and_generic().verified_expr("1 = 2")
-            )),
+            external: false,
+            show_options: ShowStatementOptions {
+                starts_with: None,
+                limit: None,
+                limit_from: None,
+                show_in: None,
+                filter_position: Some(ShowStatementFilterPosition::Suffix(
+                    ShowStatementFilter::Where(mysql_and_generic().verified_expr("1 = 2"))
+                ))
+            }
         }
     );
-    mysql_and_generic().one_statement_parses_to("SHOW TABLES IN mydb", "SHOW TABLES FROM mydb");
+    mysql_and_generic().verified_stmt("SHOW TABLES IN mydb");
+    mysql_and_generic().verified_stmt("SHOW TABLES FROM mydb");
 }
 
 #[test]
@@ -548,6 +669,7 @@ fn table_constraint_unique_primary_ctor(
             columns,
             index_options,
             characteristics,
+            nulls_distinct: NullsDistinctOption::None,
         },
         None => TableConstraint::PrimaryKey {
             name,
@@ -563,7 +685,7 @@ fn table_constraint_unique_primary_ctor(
 #[test]
 fn parse_create_table_primary_and_unique_key() {
     let sqls = ["UNIQUE KEY", "PRIMARY KEY"]
-        .map(|key_ty|format!("CREATE TABLE foo (id INT PRIMARY KEY AUTO_INCREMENT, bar INT NOT NULL, CONSTRAINT bar_key {key_ty} (bar))"));
+        .map(|key_ty| format!("CREATE TABLE foo (id INT PRIMARY KEY AUTO_INCREMENT, bar INT NOT NULL, CONSTRAINT bar_key {key_ty} (bar))"));
 
     let index_type_display = [Some(KeyOrIndexDisplay::Key), None];
 
@@ -631,7 +753,7 @@ fn parse_create_table_primary_and_unique_key() {
 #[test]
 fn parse_create_table_primary_and_unique_key_with_index_options() {
     let sqls = ["UNIQUE INDEX", "PRIMARY KEY"]
-        .map(|key_ty|format!("CREATE TABLE foo (bar INT, var INT, CONSTRAINT constr {key_ty} index_name (bar, var) USING HASH COMMENT 'yes, ' USING BTREE COMMENT 'MySQL allows')"));
+        .map(|key_ty| format!("CREATE TABLE foo (bar INT, var INT, CONSTRAINT constr {key_ty} index_name (bar, var) USING HASH COMMENT 'yes, ' USING BTREE COMMENT 'MySQL allows')"));
 
     let index_type_display = [Some(KeyOrIndexDisplay::Index), None];
 
@@ -705,7 +827,7 @@ fn parse_create_table_primary_and_unique_key_with_index_type() {
 #[test]
 fn parse_create_table_primary_and_unique_key_characteristic_test() {
     let sqls = ["UNIQUE INDEX", "PRIMARY KEY"]
-        .map(|key_ty|format!("CREATE TABLE x (y INT, CONSTRAINT constr {key_ty} (y) NOT DEFERRABLE INITIALLY IMMEDIATE)"));
+        .map(|key_ty| format!("CREATE TABLE x (y INT, CONSTRAINT constr {key_ty} (y) NOT DEFERRABLE INITIALLY IMMEDIATE)"));
     for sql in &sqls {
         mysql_and_generic().verified_stmt(sql);
     }
@@ -713,11 +835,11 @@ fn parse_create_table_primary_and_unique_key_characteristic_test() {
 
 #[test]
 fn parse_create_table_comment() {
-    let canonical = "CREATE TABLE foo (bar INT) COMMENT 'baz'";
+    let without_equal = "CREATE TABLE foo (bar INT) COMMENT 'baz'";
     let with_equal = "CREATE TABLE foo (bar INT) COMMENT = 'baz'";
 
-    for sql in [canonical, with_equal] {
-        match mysql().one_statement_parses_to(sql, canonical) {
+    for sql in [without_equal, with_equal] {
+        match mysql().verified_stmt(sql) {
             Statement::CreateTable(CreateTable { name, comment, .. }) => {
                 assert_eq!(name.to_string(), "foo");
                 assert_eq!(comment.expect("Should exist").to_string(), "baz");
@@ -768,7 +890,13 @@ fn parse_create_table_set_enum() {
                     },
                     ColumnDef {
                         name: Ident::new("baz"),
-                        data_type: DataType::Enum(vec!["a".to_string(), "b".to_string()]),
+                        data_type: DataType::Enum(
+                            vec![
+                                EnumMember::Name("a".to_string()),
+                                EnumMember::Name("b".to_string())
+                            ],
+                            None
+                        ),
                         collation: None,
                         options: vec![],
                     }
@@ -944,19 +1072,18 @@ fn parse_quote_identifiers() {
 fn parse_escaped_quote_identifiers_with_escape() {
     let sql = "SELECT `quoted `` identifier`";
     assert_eq!(
-        TestedDialects {
-            dialects: vec![Box::new(MySqlDialect {})],
-            options: None,
-        }
-        .verified_stmt(sql),
+        TestedDialects::new(vec![Box::new(MySqlDialect {})]).verified_stmt(sql),
         Statement::Query(Box::new(Query {
             with: None,
             body: Box::new(SetExpr::Select(Box::new(Select {
+                select_token: AttachedToken::empty(),
                 distinct: None,
                 top: None,
+                top_before_distinct: false,
                 projection: vec![SelectItem::UnnamedExpr(Expr::Identifier(Ident {
                     value: "quoted ` identifier".into(),
                     quote_style: Some('`'),
+                    span: Span::empty(),
                 }))],
                 into: None,
                 from: vec![],
@@ -991,22 +1118,25 @@ fn parse_escaped_quote_identifiers_with_escape() {
 fn parse_escaped_quote_identifiers_with_no_escape() {
     let sql = "SELECT `quoted `` identifier`";
     assert_eq!(
-        TestedDialects {
-            dialects: vec![Box::new(MySqlDialect {})],
-            options: Some(ParserOptions {
+        TestedDialects::new_with_options(
+            vec![Box::new(MySqlDialect {})],
+            ParserOptions {
                 trailing_commas: false,
                 unescape: false,
-            }),
-        }
+            }
+        )
         .verified_stmt(sql),
         Statement::Query(Box::new(Query {
             with: None,
             body: Box::new(SetExpr::Select(Box::new(Select {
+                select_token: AttachedToken::empty(),
                 distinct: None,
                 top: None,
+                top_before_distinct: false,
                 projection: vec![SelectItem::UnnamedExpr(Expr::Identifier(Ident {
                     value: "quoted `` identifier".into(),
                     quote_style: Some('`'),
+                    span: Span::empty(),
                 }))],
                 into: None,
                 from: vec![],
@@ -1041,19 +1171,19 @@ fn parse_escaped_quote_identifiers_with_no_escape() {
 fn parse_escaped_backticks_with_escape() {
     let sql = "SELECT ```quoted identifier```";
     assert_eq!(
-        TestedDialects {
-            dialects: vec![Box::new(MySqlDialect {})],
-            options: None,
-        }
-        .verified_stmt(sql),
+        TestedDialects::new(vec![Box::new(MySqlDialect {})]).verified_stmt(sql),
         Statement::Query(Box::new(Query {
             with: None,
             body: Box::new(SetExpr::Select(Box::new(Select {
+                select_token: AttachedToken::empty(),
+
                 distinct: None,
                 top: None,
+                top_before_distinct: false,
                 projection: vec![SelectItem::UnnamedExpr(Expr::Identifier(Ident {
                     value: "`quoted identifier`".into(),
                     quote_style: Some('`'),
+                    span: Span::empty(),
                 }))],
                 into: None,
                 from: vec![],
@@ -1088,19 +1218,23 @@ fn parse_escaped_backticks_with_escape() {
 fn parse_escaped_backticks_with_no_escape() {
     let sql = "SELECT ```quoted identifier```";
     assert_eq!(
-        TestedDialects {
-            dialects: vec![Box::new(MySqlDialect {})],
-            options: Some(ParserOptions::new().with_unescape(false)),
-        }
+        TestedDialects::new_with_options(
+            vec![Box::new(MySqlDialect {})],
+            ParserOptions::new().with_unescape(false)
+        )
         .verified_stmt(sql),
         Statement::Query(Box::new(Query {
             with: None,
             body: Box::new(SetExpr::Select(Box::new(Select {
+                select_token: AttachedToken::empty(),
+
                 distinct: None,
                 top: None,
+                top_before_distinct: false,
                 projection: vec![SelectItem::UnnamedExpr(Expr::Identifier(Ident {
                     value: "``quoted identifier``".into(),
                     quote_style: Some('`'),
+                    span: Span::empty(),
                 }))],
                 into: None,
                 from: vec![],
@@ -1144,55 +1278,26 @@ fn parse_unterminated_escape() {
 
 #[test]
 fn check_roundtrip_of_escaped_string() {
-    let options = Some(ParserOptions::new().with_unescape(false));
+    let options = ParserOptions::new().with_unescape(false);
 
-    TestedDialects {
-        dialects: vec![Box::new(MySqlDialect {})],
-        options: options.clone(),
-    }
-    .verified_stmt(r"SELECT 'I\'m fine'");
-    TestedDialects {
-        dialects: vec![Box::new(MySqlDialect {})],
-        options: options.clone(),
-    }
-    .verified_stmt(r#"SELECT 'I''m fine'"#);
-    TestedDialects {
-        dialects: vec![Box::new(MySqlDialect {})],
-        options: options.clone(),
-    }
-    .verified_stmt(r"SELECT 'I\\\'m fine'");
-    TestedDialects {
-        dialects: vec![Box::new(MySqlDialect {})],
-        options: options.clone(),
-    }
-    .verified_stmt(r"SELECT 'I\\\'m fine'");
-
-    TestedDialects {
-        dialects: vec![Box::new(MySqlDialect {})],
-        options: options.clone(),
-    }
-    .verified_stmt(r#"SELECT "I\"m fine""#);
-    TestedDialects {
-        dialects: vec![Box::new(MySqlDialect {})],
-        options: options.clone(),
-    }
-    .verified_stmt(r#"SELECT "I""m fine""#);
-    TestedDialects {
-        dialects: vec![Box::new(MySqlDialect {})],
-        options: options.clone(),
-    }
-    .verified_stmt(r#"SELECT "I\\\"m fine""#);
-    TestedDialects {
-        dialects: vec![Box::new(MySqlDialect {})],
-        options: options.clone(),
-    }
-    .verified_stmt(r#"SELECT "I\\\"m fine""#);
-
-    TestedDialects {
-        dialects: vec![Box::new(MySqlDialect {})],
-        options,
-    }
-    .verified_stmt(r#"SELECT "I'm ''fine''""#);
+    TestedDialects::new_with_options(vec![Box::new(MySqlDialect {})], options.clone())
+        .verified_stmt(r"SELECT 'I\'m fine'");
+    TestedDialects::new_with_options(vec![Box::new(MySqlDialect {})], options.clone())
+        .verified_stmt(r#"SELECT 'I''m fine'"#);
+    TestedDialects::new_with_options(vec![Box::new(MySqlDialect {})], options.clone())
+        .verified_stmt(r"SELECT 'I\\\'m fine'");
+    TestedDialects::new_with_options(vec![Box::new(MySqlDialect {})], options.clone())
+        .verified_stmt(r"SELECT 'I\\\'m fine'");
+    TestedDialects::new_with_options(vec![Box::new(MySqlDialect {})], options.clone())
+        .verified_stmt(r#"SELECT "I\"m fine""#);
+    TestedDialects::new_with_options(vec![Box::new(MySqlDialect {})], options.clone())
+        .verified_stmt(r#"SELECT "I""m fine""#);
+    TestedDialects::new_with_options(vec![Box::new(MySqlDialect {})], options.clone())
+        .verified_stmt(r#"SELECT "I\\\"m fine""#);
+    TestedDialects::new_with_options(vec![Box::new(MySqlDialect {})], options.clone())
+        .verified_stmt(r#"SELECT "I\\\"m fine""#);
+    TestedDialects::new_with_options(vec![Box::new(MySqlDialect {})], options.clone())
+        .verified_stmt(r#"SELECT "I'm ''fine''""#);
 }
 
 #[test]
@@ -1769,22 +1874,19 @@ fn parse_select_with_numeric_prefix_column_name() {
             assert_eq!(
                 q.body,
                 Box::new(SetExpr::Select(Box::new(Select {
+                    select_token: AttachedToken::empty(),
+
                     distinct: None,
                     top: None,
+                    top_before_distinct: false,
                     projection: vec![SelectItem::UnnamedExpr(Expr::Identifier(Ident::new(
                         "123col_$@123abc"
                     )))],
                     into: None,
                     from: vec![TableWithJoins {
-                        relation: TableFactor::Table {
-                            name: ObjectName(vec![Ident::with_quote('"', "table")]),
-                            alias: None,
-                            args: None,
-                            with_hints: vec![],
-                            version: None,
-                            partitions: vec![],
-                            with_ordinality: false,
-                        },
+                        relation: table_from_name(ObjectName(vec![Ident::with_quote(
+                            '"', "table"
+                        )])),
                         joins: vec![]
                     }],
                     lateral_views: vec![],
@@ -1823,23 +1925,20 @@ fn parse_select_with_concatenation_of_exp_number_and_numeric_prefix_column() {
             assert_eq!(
                 q.body,
                 Box::new(SetExpr::Select(Box::new(Select {
+                    select_token: AttachedToken::empty(),
+
                     distinct: None,
                     top: None,
+                    top_before_distinct: false,
                     projection: vec![
                         SelectItem::UnnamedExpr(Expr::Value(number("123e4"))),
                         SelectItem::UnnamedExpr(Expr::Identifier(Ident::new("123col_$@123abc")))
                     ],
                     into: None,
                     from: vec![TableWithJoins {
-                        relation: TableFactor::Table {
-                            name: ObjectName(vec![Ident::with_quote('"', "table")]),
-                            alias: None,
-                            args: None,
-                            with_hints: vec![],
-                            version: None,
-                            partitions: vec![],
-                            with_ordinality: false,
-                        },
+                        relation: table_from_name(ObjectName(vec![Ident::with_quote(
+                            '"', "table"
+                        )])),
                         joins: vec![]
                     }],
                     lateral_views: vec![],
@@ -1891,6 +1990,7 @@ fn parse_update_with_joins() {
             from: _from,
             selection,
             returning,
+            or: None,
         } => {
             assert_eq!(
                 TableWithJoins {
@@ -1905,6 +2005,8 @@ fn parse_update_with_joins() {
                         version: None,
                         partitions: vec![],
                         with_ordinality: false,
+                        json_path: None,
+                        sample: None,
                     },
                     joins: vec![Join {
                         relation: TableFactor::Table {
@@ -1918,6 +2020,8 @@ fn parse_update_with_joins() {
                             version: None,
                             partitions: vec![],
                             with_ordinality: false,
+                            json_path: None,
+                            sample: None,
                         },
                         global: false,
                         join_operator: JoinOperator::Inner(JoinConstraint::On(Expr::BinaryOp {
@@ -1971,7 +2075,8 @@ fn parse_delete_with_order_by() {
                 vec![OrderByExpr {
                     expr: Expr::Identifier(Ident {
                         value: "id".to_owned(),
-                        quote_style: None
+                        quote_style: None,
+                        span: Span::empty(),
                     }),
                     asc: Some(false),
                     nulls_first: None,
@@ -2052,7 +2157,8 @@ fn parse_alter_table_add_column() {
                     },
                     column_position: Some(MySQLColumnPosition::After(Ident {
                         value: String::from("foo"),
-                        quote_style: None
+                        quote_style: None,
+                        span: Span::empty(),
                     })),
                 },]
             );
@@ -2103,6 +2209,7 @@ fn parse_alter_table_add_columns() {
                         column_position: Some(MySQLColumnPosition::After(Ident {
                             value: String::from("foo"),
                             quote_style: None,
+                            span: Span::empty(),
                         })),
                     },
                 ]
@@ -2163,6 +2270,7 @@ fn parse_alter_table_change_column() {
         column_position: Some(MySQLColumnPosition::After(Ident {
             value: String::from("foo"),
             quote_style: None,
+            span: Span::empty(),
         })),
     };
     let sql4 = "ALTER TABLE orders CHANGE COLUMN description desc TEXT NOT NULL AFTER foo";
@@ -2202,6 +2310,7 @@ fn parse_alter_table_change_column_with_column_position() {
         column_position: Some(MySQLColumnPosition::After(Ident {
             value: String::from("total_count"),
             quote_style: None,
+            span: Span::empty(),
         })),
     };
 
@@ -2258,6 +2367,7 @@ fn parse_alter_table_modify_column() {
         column_position: Some(MySQLColumnPosition::After(Ident {
             value: String::from("foo"),
             quote_style: None,
+            span: Span::empty(),
         })),
     };
     let sql4 = "ALTER TABLE orders MODIFY COLUMN description TEXT NOT NULL AFTER foo";
@@ -2295,6 +2405,7 @@ fn parse_alter_table_modify_column_with_column_position() {
         column_position: Some(MySQLColumnPosition::After(Ident {
             value: String::from("total_count"),
             quote_style: None,
+            span: Span::empty(),
         })),
     };
 
@@ -2313,6 +2424,8 @@ fn parse_alter_table_modify_column_with_column_position() {
 
 #[test]
 fn parse_substring_in_select() {
+    use sqlparser::tokenizer::Span;
+
     let sql = "SELECT DISTINCT SUBSTRING(description, 0, 1) FROM test";
     match mysql().one_statement_parses_to(
         sql,
@@ -2323,12 +2436,15 @@ fn parse_substring_in_select() {
                 Box::new(Query {
                     with: None,
                     body: Box::new(SetExpr::Select(Box::new(Select {
+                        select_token: AttachedToken::empty(),
                         distinct: Some(Distinct::Distinct),
                         top: None,
+                        top_before_distinct: false,
                         projection: vec![SelectItem::UnnamedExpr(Expr::Substring {
                             expr: Box::new(Expr::Identifier(Ident {
                                 value: "description".to_string(),
-                                quote_style: None
+                                quote_style: None,
+                                span: Span::empty(),
                             })),
                             substring_from: Some(Box::new(Expr::Value(number("0")))),
                             substring_for: Some(Box::new(Expr::Value(number("1")))),
@@ -2336,18 +2452,11 @@ fn parse_substring_in_select() {
                         })],
                         into: None,
                         from: vec![TableWithJoins {
-                            relation: TableFactor::Table {
-                                name: ObjectName(vec![Ident {
-                                    value: "test".to_string(),
-                                    quote_style: None
-                                }]),
-                                alias: None,
-                                args: None,
-                                with_hints: vec![],
-                                version: None,
-                                partitions: vec![],
-                                with_ordinality: false,
-                            },
+                            relation: table_from_name(ObjectName(vec![Ident {
+                                value: "test".to_string(),
+                                quote_style: None,
+                                span: Span::empty(),
+                            }])),
                             joins: vec![]
                         }],
                         lateral_views: vec![],
@@ -2624,17 +2733,11 @@ fn parse_create_table_with_fulltext_definition_should_not_accept_constraint_name
 }
 
 fn mysql() -> TestedDialects {
-    TestedDialects {
-        dialects: vec![Box::new(MySqlDialect {})],
-        options: None,
-    }
+    TestedDialects::new(vec![Box::new(MySqlDialect {})])
 }
 
 fn mysql_and_generic() -> TestedDialects {
-    TestedDialects {
-        dialects: vec![Box::new(MySqlDialect {}), Box::new(GenericDialect {})],
-        options: None,
-    }
+    TestedDialects::new(vec![Box::new(MySqlDialect {}), Box::new(GenericDialect {})])
 }
 
 #[test]
@@ -2650,8 +2753,10 @@ fn parse_hex_string_introducer() {
         Statement::Query(Box::new(Query {
             with: None,
             body: Box::new(SetExpr::Select(Box::new(Select {
+                select_token: AttachedToken::empty(),
                 distinct: None,
                 top: None,
+                top_before_distinct: false,
                 projection: vec![SelectItem::UnnamedExpr(Expr::IntroducedString {
                     introducer: "_latin1".to_string(),
                     value: Value::HexStringLiteral("4D7953514C".to_string())
@@ -2801,6 +2906,12 @@ fn parse_json_table() {
         r#"SELECT * FROM JSON_TABLE('[1,2]', '$[*]' COLUMNS(x INT PATH '$' ERROR ON EMPTY)) AS t"#,
     );
     mysql().verified_only_select(r#"SELECT * FROM JSON_TABLE('[1,2]', '$[*]' COLUMNS(x INT PATH '$' ERROR ON EMPTY DEFAULT '0' ON ERROR)) AS t"#);
+    mysql().verified_only_select(
+        r#"SELECT jt.* FROM JSON_TABLE('["Alice", "Bob", "Charlie"]', '$[*]' COLUMNS(row_num FOR ORDINALITY, name VARCHAR(50) PATH '$')) AS jt"#,
+    );
+    mysql().verified_only_select(
+        r#"SELECT * FROM JSON_TABLE('[ {"a": 1, "b": [11,111]}, {"a": 2, "b": [22,222]}, {"a":3}]', '$[*]' COLUMNS(a INT PATH '$.a', NESTED PATH '$.b[*]' COLUMNS (b INT PATH '$'))) AS jt"#,
+    );
     assert_eq!(
         mysql()
             .verified_only_select(
@@ -2812,14 +2923,14 @@ fn parse_json_table() {
             json_expr: Expr::Value(Value::SingleQuotedString("[1,2]".to_string())),
             json_path: Value::SingleQuotedString("$[*]".to_string()),
             columns: vec![
-                JsonTableColumn {
+                JsonTableColumn::Named(JsonTableNamedColumn {
                     name: Ident::new("x"),
                     r#type: DataType::Int(None),
                     path: Value::SingleQuotedString("$".to_string()),
                     exists: false,
                     on_empty: Some(JsonTableColumnErrorHandling::Default(Value::SingleQuotedString("0".to_string()))),
                     on_error: Some(JsonTableColumnErrorHandling::Null),
-                },
+                }),
             ],
             alias: Some(TableAlias {
                 name: Ident::new("t"),
@@ -2838,4 +2949,76 @@ fn test_group_concat() {
     mysql_and_generic().verified_expr("GROUP_CONCAT(test_score SEPARATOR ' ')");
     mysql_and_generic()
         .verified_expr("GROUP_CONCAT(DISTINCT test_score ORDER BY test_score DESC SEPARATOR ' ')");
+}
+
+/// The XOR binary operator is only supported in MySQL
+#[test]
+fn parse_logical_xor() {
+    let sql = "SELECT true XOR true, false XOR false, true XOR false, false XOR true";
+    let select = mysql_and_generic().verified_only_select(sql);
+    assert_eq!(
+        SelectItem::UnnamedExpr(Expr::BinaryOp {
+            left: Box::new(Expr::Value(Value::Boolean(true))),
+            op: BinaryOperator::Xor,
+            right: Box::new(Expr::Value(Value::Boolean(true))),
+        }),
+        select.projection[0]
+    );
+    assert_eq!(
+        SelectItem::UnnamedExpr(Expr::BinaryOp {
+            left: Box::new(Expr::Value(Value::Boolean(false))),
+            op: BinaryOperator::Xor,
+            right: Box::new(Expr::Value(Value::Boolean(false))),
+        }),
+        select.projection[1]
+    );
+    assert_eq!(
+        SelectItem::UnnamedExpr(Expr::BinaryOp {
+            left: Box::new(Expr::Value(Value::Boolean(true))),
+            op: BinaryOperator::Xor,
+            right: Box::new(Expr::Value(Value::Boolean(false))),
+        }),
+        select.projection[2]
+    );
+    assert_eq!(
+        SelectItem::UnnamedExpr(Expr::BinaryOp {
+            left: Box::new(Expr::Value(Value::Boolean(false))),
+            op: BinaryOperator::Xor,
+            right: Box::new(Expr::Value(Value::Boolean(true))),
+        }),
+        select.projection[3]
+    );
+}
+
+#[test]
+fn parse_bitstring_literal() {
+    let select = mysql_and_generic().verified_only_select("SELECT B'111'");
+    assert_eq!(
+        select.projection,
+        vec![SelectItem::UnnamedExpr(Expr::Value(
+            Value::SingleQuotedByteStringLiteral("111".to_string())
+        ))]
+    );
+}
+
+#[test]
+fn parse_longblob_type() {
+    let sql = "CREATE TABLE foo (bar LONGBLOB)";
+    let stmt = mysql_and_generic().verified_stmt(sql);
+    if let Statement::CreateTable(CreateTable { columns, .. }) = stmt {
+        assert_eq!(columns.len(), 1);
+        assert_eq!(columns[0].data_type, DataType::LongBlob);
+    } else {
+        unreachable!()
+    }
+    mysql_and_generic().verified_stmt("CREATE TABLE foo (bar TINYBLOB)");
+    mysql_and_generic().verified_stmt("CREATE TABLE foo (bar MEDIUMBLOB)");
+    mysql_and_generic().verified_stmt("CREATE TABLE foo (bar TINYTEXT)");
+    mysql_and_generic().verified_stmt("CREATE TABLE foo (bar MEDIUMTEXT)");
+    mysql_and_generic().verified_stmt("CREATE TABLE foo (bar LONGTEXT)");
+}
+
+#[test]
+fn parse_begin_without_transaction() {
+    mysql().verified_stmt("BEGIN");
 }

@@ -8272,6 +8272,22 @@ impl<'a> Parser<'a> {
                 Keyword::INT64 => Ok(DataType::Int64),
                 Keyword::INT128 => Ok(DataType::Int128),
                 Keyword::INT256 => Ok(DataType::Int256),
+                Keyword::BYTE => {
+                    let optional_precision = self.parse_optional_precision();
+                    if self.parse_keyword(Keyword::UNSIGNED) {
+                        Ok(DataType::UnsignedByte(optional_precision?))
+                    } else {
+                        Ok(DataType::Byte(optional_precision?))
+                    }
+                }
+                Keyword::SHORT => {
+                    let optional_precision = self.parse_optional_precision();
+                    if self.parse_keyword(Keyword::UNSIGNED) {
+                        Ok(DataType::UnsignedShort(optional_precision?))
+                    } else {
+                        Ok(DataType::Short(optional_precision?))
+                    }
+                }
                 Keyword::INTEGER => {
                     let optional_precision = self.parse_optional_precision();
                     if self.parse_keyword(Keyword::UNSIGNED) {

@@ -196,6 +196,10 @@ pub enum DataType {
     ///
     /// [clickhouse]: https://clickhouse.com/docs/en/sql-reference/data-types/int-uint
     Int256,
+    /// Byte with optional display width e.g. BYTE or BYTE(6)
+    Byte(Option<u64>),
+    /// Short with optional display width e.g. SHORT or SHORT(9)
+    Short(Option<u64>),
     /// Integer with optional display width e.g. INTEGER or INTEGER(11)
     Integer(Option<u64>),
     /// Long with optional display width e.g. LONG or LONG(20)
@@ -204,6 +208,10 @@ pub enum DataType {
     UnsignedInt(Option<u64>),
     /// Unsigned int4 with optional display width e.g. INT4 UNSIGNED or INT4(11) UNSIGNED
     UnsignedInt4(Option<u64>),
+    /// Unsigned byte with optional display width e.g. BYTE UNSIGNED or BYTE(6) UNSIGNED
+    UnsignedByte(Option<u64>),
+    /// Unsigned short with optional display width e.g. SHORT UNSIGNED or SHORT(9) UNSIGNED
+    UnsignedShort(Option<u64>),
     /// Unsigned integer with optional display width e.g. INTEGER UNSIGNED or INTEGER(11) UNSIGNED
     UnsignedInteger(Option<u64>),
     /// Unsigned long with optional display width e.g. LONG UNSIGNED or LONG(20) UNSIGNED
@@ -482,6 +490,18 @@ impl fmt::Display for DataType {
             }
             DataType::UnsignedInt4(zerofill) => {
                 format_type_with_optional_length(f, "INT4", zerofill, true)
+            }
+            DataType::Byte(zerofill) => {
+                format_type_with_optional_length(f, "BYTE", zerofill, false)
+            }
+            DataType::UnsignedByte(zerofill) => {
+                format_type_with_optional_length(f, "BYTE", zerofill, true)
+            }
+            DataType::Short(zerofill) => {
+                format_type_with_optional_length(f, "SHORT", zerofill, false)
+            }
+            DataType::UnsignedShort(zerofill) => {
+                format_type_with_optional_length(f, "SHORT", zerofill, true)
             }
             DataType::Integer(zerofill) => {
                 format_type_with_optional_length(f, "INTEGER", zerofill, false)

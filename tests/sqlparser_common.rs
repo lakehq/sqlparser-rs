@@ -2405,6 +2405,54 @@ fn parse_cast() {
         expr_from_projection(only(&select.projection))
     );
 
+    let sql = "SELECT CAST(id AS BYTE) FROM customer";
+    let select = verified_only_select(sql);
+    assert_eq!(
+        &Expr::Cast {
+            kind: CastKind::Cast,
+            expr: Box::new(Expr::Identifier(Ident::new("id"))),
+            data_type: DataType::Byte(None),
+            format: None,
+        },
+        expr_from_projection(only(&select.projection))
+    );
+
+    let sql = "SELECT CAST(id AS BYTE(6)) FROM customer";
+    let select = verified_only_select(sql);
+    assert_eq!(
+        &Expr::Cast {
+            kind: CastKind::Cast,
+            expr: Box::new(Expr::Identifier(Ident::new("id"))),
+            data_type: DataType::Byte(Some(6)),
+            format: None,
+        },
+        expr_from_projection(only(&select.projection))
+    );
+
+    let sql = "SELECT CAST(id AS SHORT) FROM customer";
+    let select = verified_only_select(sql);
+    assert_eq!(
+        &Expr::Cast {
+            kind: CastKind::Cast,
+            expr: Box::new(Expr::Identifier(Ident::new("id"))),
+            data_type: DataType::Short(None),
+            format: None,
+        },
+        expr_from_projection(only(&select.projection))
+    );
+
+    let sql = "SELECT CAST(id AS SHORT(9)) FROM customer";
+    let select = verified_only_select(sql);
+    assert_eq!(
+        &Expr::Cast {
+            kind: CastKind::Cast,
+            expr: Box::new(Expr::Identifier(Ident::new("id"))),
+            data_type: DataType::Short(Some(9)),
+            format: None,
+        },
+        expr_from_projection(only(&select.projection))
+    );
+
     let sql = "SELECT CAST(id AS LONG) FROM customer";
     let select = verified_only_select(sql);
     assert_eq!(
@@ -2437,6 +2485,16 @@ fn parse_cast() {
     one_statement_parses_to(
         "SELECT CAST(id AS BIGINT) FROM customer",
         "SELECT CAST(id AS BIGINT) FROM customer",
+    );
+
+    one_statement_parses_to(
+        "SELECT CAST(id AS BYTE(6) UNSIGNED) FROM customer",
+        "SELECT CAST(id AS BYTE(6) UNSIGNED) FROM customer",
+    );
+
+    one_statement_parses_to(
+        "SELECT CAST(id AS SHORT(9) UNSIGNED) FROM customer",
+        "SELECT CAST(id AS SHORT(9) UNSIGNED) FROM customer",
     );
 
     one_statement_parses_to(

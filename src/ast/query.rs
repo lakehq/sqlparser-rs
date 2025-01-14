@@ -208,6 +208,7 @@ pub enum SetOperator {
     Union,
     Except,
     Intersect,
+    Minus,
 }
 
 impl fmt::Display for SetOperator {
@@ -216,6 +217,7 @@ impl fmt::Display for SetOperator {
             SetOperator::Union => "UNION",
             SetOperator::Except => "EXCEPT",
             SetOperator::Intersect => "INTERSECT",
+            SetOperator::Minus => "MINUS",
         })
     }
 }
@@ -350,7 +352,9 @@ impl fmt::Display for Select {
             }
         }
 
-        write!(f, " {}", display_comma_separated(&self.projection))?;
+        if !self.projection.is_empty() {
+            write!(f, " {}", display_comma_separated(&self.projection))?;
+        }
 
         if let Some(ref into) = self.into {
             write!(f, " {into}")?;
@@ -2476,6 +2480,29 @@ impl fmt::Display for FormatClause {
     }
 }
 
+/// FORMAT identifier in input context, specific to ClickHouse.
+///
+/// [ClickHouse]: <https://clickhouse.com/docs/en/interfaces/formats>
+#[derive(Debug, Clone, PartialEq, PartialOrd, Eq, Ord, Hash)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "visitor", derive(Visit, VisitMut))]
+pub struct InputFormatClause {
+    pub ident: Ident,
+    pub values: Vec<Expr>,
+}
+
+impl fmt::Display for InputFormatClause {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "FORMAT {}", self.ident)?;
+
+        if !self.values.is_empty() {
+            write!(f, " {}", display_comma_separated(self.values.as_slice()))?;
+        }
+
+        Ok(())
+    }
+}
+
 /// FOR XML or FOR JSON clause, specific to MSSQL
 /// (formats the output of a query as XML or JSON)
 #[derive(Debug, Clone, PartialEq, PartialOrd, Eq, Ord, Hash)]
@@ -2787,4 +2814,17 @@ impl fmt::Display for ValueTableMode {
             ValueTableMode::AsValue => write!(f, "AS VALUE"),
         }
     }
+}
+
+/// The `FROM` clause of an `UPDATE TABLE` statement
+#[derive(Debug, Clone, PartialEq, PartialOrd, Eq, Ord, Hash)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "visitor", derive(Visit, VisitMut))]
+pub enum UpdateTableFromKind {
+    /// Update Statment where the 'FROM' clause is before the 'SET' keyword (Supported by Snowflake)
+    /// For Example: `UPDATE FROM t1 SET t1.name='aaa'`
+    BeforeSet(TableWithJoins),
+    /// Update Statment where the 'FROM' clause is after the 'SET' keyword (Which is the standard way)
+    /// For Example: `UPDATE SET t1.name='aaa' FROM t1`
+    AfterSet(TableWithJoins),
 }

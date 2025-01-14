@@ -71,7 +71,7 @@ The following optional [crate  features](https://doc.rust-lang.org/cargo/referen
 
 * `serde`: Adds [Serde](https://serde.rs/) support by implementing  `Serialize` and `Deserialize` for all AST nodes.
 * `visitor`: Adds a `Visitor` capable of recursively walking the AST tree.
-
+* `recursive-protection` (enabled by default), uses [recursive](https://docs.rs/recursive/latest/recursive/) for stack overflow protection. 
 
 ## Syntax vs Semantics
 
@@ -248,10 +248,13 @@ You can run them with:
 ```
 git checkout main
 cd sqlparser_bench
-cargo bench
+cargo bench -- --save-baseline main
 git checkout <your branch>
-cargo bench
+cargo bench -- --baseline main
 ```
+
+By adding the `--save-baseline main` and `--baseline main` you can track the
+progress of your improvements as you continue working on the feature branch.
 
 ## Licensing
 

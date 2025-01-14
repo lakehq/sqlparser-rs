@@ -231,15 +231,29 @@ impl Dialect for PostgreSqlDialect {
     fn supports_named_fn_args_with_expr_name(&self) -> bool {
         true
     }
+
+    /// Return true if the dialect supports empty projections in SELECT statements
+    ///
+    /// Example
+    /// ```sql
+    /// SELECT from table_name
+    /// ```
+    fn supports_empty_projections(&self) -> bool {
+        true
+    }
+
+    fn supports_nested_comments(&self) -> bool {
+        true
+    }
 }
 
 pub fn parse_create(parser: &mut Parser) -> Option<Result<Statement, ParserError>> {
     let name = parser.maybe_parse(|parser| -> Result<ObjectName, ParserError> {
-        parser.expect_keyword(Keyword::CREATE)?;
-        parser.expect_keyword(Keyword::TYPE)?;
+        parser.expect_keyword_is(Keyword::CREATE)?;
+        parser.expect_keyword_is(Keyword::TYPE)?;
         let name = parser.parse_object_name(false)?;
-        parser.expect_keyword(Keyword::AS)?;
-        parser.expect_keyword(Keyword::ENUM)?;
+        parser.expect_keyword_is(Keyword::AS)?;
+        parser.expect_keyword_is(Keyword::ENUM)?;
         Ok(name)
     });
 
@@ -258,7 +272,7 @@ pub fn parse_create_type_as_enum(
         return parser.expected("'(' after CREATE TYPE AS ENUM", parser.peek_token());
     }
 
-    let labels = parser.parse_comma_separated0(|p| p.parse_identifier(false), Token::RParen)?;
+    let labels = parser.parse_comma_separated0(|p| p.parse_identifier(), Token::RParen)?;
     parser.expect_token(&Token::RParen)?;
 
     Ok(Statement::CreateType {

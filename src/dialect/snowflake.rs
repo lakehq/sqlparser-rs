@@ -19,8 +19,8 @@
 use crate::alloc::string::ToString;
 use crate::ast::helpers::stmt_create_table::CreateTableBuilder;
 use crate::ast::helpers::stmt_data_loading::{
-    DataLoadingOption, DataLoadingOptionType, DataLoadingOptions, StageLoadSelectItem,
-    StageParamsObject,
+    DataLoadingOption, DataLoadingOptionType, DataLoadingOptions, FileStagingCommand,
+    StageLoadSelectItem, StageParamsObject,
 };
 use crate::ast::{
     ColumnOption, ColumnPolicy, ColumnPolicyProperty, Ident, IdentityParameters, IdentityProperty,
@@ -165,6 +165,15 @@ impl Dialect for SnowflakeDialect {
             return Some(parse_copy_into(parser));
         }
 
+        if let Some(kw) = parser.parse_one_of_keywords(&[
+            Keyword::LIST,
+            Keyword::LS,
+            Keyword::REMOVE,
+            Keyword::RM,
+        ]) {
+            return Some(parse_file_staging_command(kw, parser));
+        }
+
         None
     }
 
@@ -234,6 +243,30 @@ impl Dialect for SnowflakeDialect {
             RESERVED_FOR_IDENTIFIER.contains(&kw)
         }
     }
+
+    fn supports_partiql(&self) -> bool {
+        true
+    }
+}
+
+fn parse_file_staging_command(kw: Keyword, parser: &mut Parser) -> Result<Statement, ParserError> {
+    let stage = parse_snowflake_stage_name(parser)?;
+    let pattern = if parser.parse_keyword(Keyword::PATTERN) {
+        parser.expect_token(&Token::Eq)?;
+        Some(parser.parse_literal_string()?)
+    } else {
+        None
+    };
+
+    match kw {
+        Keyword::LIST | Keyword::LS => Ok(Statement::List(FileStagingCommand { stage, pattern })),
+        Keyword::REMOVE | Keyword::RM => {
+            Ok(Statement::Remove(FileStagingCommand { stage, pattern }))
+        }
+        _ => Err(ParserError::ParserError(
+            "unexpected stage command, expecting LIST, LS, REMOVE or RM".to_string(),
+        )),
+    }
 }
 
 /// Parse snowflake create table statement.
@@ -269,7 +302,7 @@ pub fn parse_create_table(
         match &next_token.token {
             Token::Word(word) => match word.keyword {
                 Keyword::COPY => {
-                    parser.expect_keyword(Keyword::GRANTS)?;
+                    parser.expect_keyword_is(Keyword::GRANTS)?;
                     builder = builder.copy_grants(true);
                 }
                 Keyword::COMMENT => {
@@ -293,10 +326,10 @@ pub fn parse_create_table(
                     break;
                 }
                 Keyword::CLUSTER => {
-                    parser.expect_keyword(Keyword::BY)?;
+                    parser.expect_keyword_is(Keyword::BY)?;
                     parser.expect_token(&Token::LParen)?;
                     let cluster_by = Some(WrappedCollection::Parentheses(
-                        parser.parse_comma_separated(|p| p.parse_identifier(false))?,
+                        parser.parse_comma_separated(|p| p.parse_identifier())?,
                     ));
                     parser.expect_token(&Token::RParen)?;
 
@@ -356,16 +389,16 @@ pub fn parse_create_table(
                     parser.prev_token();
                 }
                 Keyword::AGGREGATION => {
-                    parser.expect_keyword(Keyword::POLICY)?;
+                    parser.expect_keyword_is(Keyword::POLICY)?;
                     let aggregation_policy = parser.parse_object_name(false)?;
                     builder = builder.with_aggregation_policy(Some(aggregation_policy));
                 }
                 Keyword::ROW => {
                     parser.expect_keywords(&[Keyword::ACCESS, Keyword::POLICY])?;
                     let policy = parser.parse_object_name(false)?;
-                    parser.expect_keyword(Keyword::ON)?;
+                    parser.expect_keyword_is(Keyword::ON)?;
                     parser.expect_token(&Token::LParen)?;
-                    let columns = parser.parse_comma_separated(|p| p.parse_identifier(false))?;
+                    let columns = parser.parse_comma_separated(|p| p.parse_identifier())?;
                     parser.expect_token(&Token::RParen)?;
 
                     builder =
@@ -497,7 +530,7 @@ pub fn parse_stage_name_identifier(parser: &mut Parser) -> Result<Ident, ParserE
             Token::Tilde => ident.push('~'),
             Token::Mod => ident.push('%'),
             Token::Div => ident.push('/'),
-            Token::Word(w) => ident.push_str(&w.value),
+            Token::Word(w) => ident.push_str(&w.to_string()),
             _ => return parser.expected("stage name identifier", parser.peek_token()),
         }
     }
@@ -532,15 +565,15 @@ pub fn parse_copy_into(parser: &mut Parser) -> Result<Statement, ParserError> {
     let from_stage: ObjectName;
     let stage_params: StageParamsObject;
 
-    parser.expect_keyword(Keyword::FROM)?;
+    parser.expect_keyword_is(Keyword::FROM)?;
     // check if data load transformations are present
     match parser.next_token().token {
         Token::LParen => {
             // data load with transformations
-            parser.expect_keyword(Keyword::SELECT)?;
+            parser.expect_keyword_is(Keyword::SELECT)?;
             from_transformations = parse_select_items_for_data_load(parser)?;
 
-            parser.expect_keyword(Keyword::FROM)?;
+            parser.expect_keyword_is(Keyword::FROM)?;
             from_stage = parse_snowflake_stage_name(parser)?;
             stage_params = parse_stage_params(parser)?;
 
@@ -856,7 +889,7 @@ fn parse_identity_property(parser: &mut Parser) -> Result<IdentityProperty, Pars
         ))
     } else if parser.parse_keyword(Keyword::START) {
         let seed = parser.parse_number()?;
-        parser.expect_keyword(Keyword::INCREMENT)?;
+        parser.expect_keyword_is(Keyword::INCREMENT)?;
         let increment = parser.parse_number()?;
 
         Some(IdentityPropertyFormatKind::StartAndIncrement(
@@ -883,10 +916,10 @@ fn parse_column_policy_property(
     parser: &mut Parser,
     with: bool,
 ) -> Result<ColumnPolicyProperty, ParserError> {
-    let policy_name = parser.parse_identifier(false)?;
+    let policy_name = parser.parse_identifier()?;
     let using_columns = if parser.parse_keyword(Keyword::USING) {
         parser.expect_token(&Token::LParen)?;
-        let columns = parser.parse_comma_separated(|p| p.parse_identifier(false))?;
+        let columns = parser.parse_comma_separated(|p| p.parse_identifier())?;
         parser.expect_token(&Token::RParen)?;
         Some(columns)
     } else {

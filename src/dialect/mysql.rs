@@ -98,8 +98,17 @@ impl Dialect for MySqlDialect {
         true
     }
 
-    /// see <https://dev.mysql.com/doc/refman/8.4/en/create-table-select.html>
+    /// See: <https://dev.mysql.com/doc/refman/8.4/en/create-table-select.html>
     fn supports_create_table_select(&self) -> bool {
+        true
+    }
+
+    /// See: <https://dev.mysql.com/doc/refman/8.4/en/insert.html>
+    fn supports_insert_set(&self) -> bool {
+        true
+    }
+
+    fn supports_user_host_grantee(&self) -> bool {
         true
     }
 }
@@ -113,7 +122,7 @@ fn parse_lock_tables(parser: &mut Parser) -> Result<Statement, ParserError> {
 
 // tbl_name [[AS] alias] lock_type
 fn parse_lock_table(parser: &mut Parser) -> Result<LockTable, ParserError> {
-    let table = parser.parse_identifier(false)?;
+    let table = parser.parse_identifier()?;
     let alias =
         parser.parse_optional_alias(&[Keyword::READ, Keyword::WRITE, Keyword::LOW_PRIORITY])?;
     let lock_type = parse_lock_tables_type(parser)?;

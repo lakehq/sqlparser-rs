@@ -663,6 +663,100 @@ fn parse_create_extension() {
 }
 
 #[test]
+fn parse_drop_extension() {
+    assert_eq!(
+        pg_and_generic().verified_stmt("DROP EXTENSION extension_name"),
+        Statement::DropExtension {
+            names: vec!["extension_name".into()],
+            if_exists: false,
+            cascade_or_restrict: None,
+        }
+    );
+    assert_eq!(
+        pg_and_generic().verified_stmt("DROP EXTENSION extension_name CASCADE"),
+        Statement::DropExtension {
+            names: vec!["extension_name".into()],
+            if_exists: false,
+            cascade_or_restrict: Some(ReferentialAction::Cascade),
+        }
+    );
+
+    assert_eq!(
+        pg_and_generic().verified_stmt("DROP EXTENSION extension_name RESTRICT"),
+        Statement::DropExtension {
+            names: vec!["extension_name".into()],
+            if_exists: false,
+            cascade_or_restrict: Some(ReferentialAction::Restrict),
+        }
+    );
+
+    assert_eq!(
+        pg_and_generic().verified_stmt("DROP EXTENSION extension_name, extension_name2 CASCADE"),
+        Statement::DropExtension {
+            names: vec!["extension_name".into(), "extension_name2".into()],
+            if_exists: false,
+            cascade_or_restrict: Some(ReferentialAction::Cascade),
+        }
+    );
+
+    assert_eq!(
+        pg_and_generic().verified_stmt("DROP EXTENSION extension_name, extension_name2 RESTRICT"),
+        Statement::DropExtension {
+            names: vec!["extension_name".into(), "extension_name2".into()],
+            if_exists: false,
+            cascade_or_restrict: Some(ReferentialAction::Restrict),
+        }
+    );
+
+    assert_eq!(
+        pg_and_generic().verified_stmt("DROP EXTENSION IF EXISTS extension_name"),
+        Statement::DropExtension {
+            names: vec!["extension_name".into()],
+            if_exists: true,
+            cascade_or_restrict: None,
+        }
+    );
+
+    assert_eq!(
+        pg_and_generic().verified_stmt("DROP EXTENSION IF EXISTS extension_name CASCADE"),
+        Statement::DropExtension {
+            names: vec!["extension_name".into()],
+            if_exists: true,
+            cascade_or_restrict: Some(ReferentialAction::Cascade),
+        }
+    );
+
+    assert_eq!(
+        pg_and_generic().verified_stmt("DROP EXTENSION IF EXISTS extension_name RESTRICT"),
+        Statement::DropExtension {
+            names: vec!["extension_name".into()],
+            if_exists: true,
+            cascade_or_restrict: Some(ReferentialAction::Restrict),
+        }
+    );
+
+    assert_eq!(
+        pg_and_generic()
+            .verified_stmt("DROP EXTENSION IF EXISTS extension_name1, extension_name2 CASCADE"),
+        Statement::DropExtension {
+            names: vec!["extension_name1".into(), "extension_name2".into()],
+            if_exists: true,
+            cascade_or_restrict: Some(ReferentialAction::Cascade),
+        }
+    );
+
+    assert_eq!(
+        pg_and_generic()
+            .verified_stmt("DROP EXTENSION IF EXISTS extension_name1, extension_name2 RESTRICT"),
+        Statement::DropExtension {
+            names: vec!["extension_name1".into(), "extension_name2".into()],
+            if_exists: true,
+            cascade_or_restrict: Some(ReferentialAction::Restrict),
+        }
+    );
+}
+
+#[test]
 fn parse_alter_table_alter_column() {
     pg().one_statement_parses_to(
         "ALTER TABLE tab ALTER COLUMN is_active TYPE TEXT USING 'text'",
@@ -1631,7 +1725,7 @@ fn parse_prepare() {
     };
     match sub_stmt.as_ref() {
         Statement::Insert(Insert {
-            table_name,
+            table: table_name,
             columns,
             source: Some(source),
             ..
@@ -2095,11 +2189,11 @@ fn parse_array_index_expr() {
     let sql = "SELECT foo[0] FROM foos";
     let select = pg_and_generic().verified_only_select(sql);
     assert_eq!(
-        &Expr::Subscript {
-            expr: Box::new(Expr::Identifier(Ident::new("foo"))),
-            subscript: Box::new(Subscript::Index {
+        &Expr::CompoundFieldAccess {
+            root: Box::new(Expr::Identifier(Ident::new("foo"))),
+            access_chain: vec![AccessExpr::Subscript(Subscript::Index {
                 index: num[0].clone()
-            }),
+            })],
         },
         expr_from_projection(only(&select.projection)),
     );
@@ -2107,16 +2201,16 @@ fn parse_array_index_expr() {
     let sql = "SELECT foo[0][0] FROM foos";
     let select = pg_and_generic().verified_only_select(sql);
     assert_eq!(
-        &Expr::Subscript {
-            expr: Box::new(Expr::Subscript {
-                expr: Box::new(Expr::Identifier(Ident::new("foo"))),
-                subscript: Box::new(Subscript::Index {
+        &Expr::CompoundFieldAccess {
+            root: Box::new(Expr::Identifier(Ident::new("foo"))),
+            access_chain: vec![
+                AccessExpr::Subscript(Subscript::Index {
                     index: num[0].clone()
                 }),
-            }),
-            subscript: Box::new(Subscript::Index {
-                index: num[0].clone()
-            }),
+                AccessExpr::Subscript(Subscript::Index {
+                    index: num[0].clone()
+                })
+            ],
         },
         expr_from_projection(only(&select.projection)),
     );
@@ -2124,29 +2218,27 @@ fn parse_array_index_expr() {
     let sql = r#"SELECT bar[0]["baz"]["fooz"] FROM foos"#;
     let select = pg_and_generic().verified_only_select(sql);
     assert_eq!(
-        &Expr::Subscript {
-            expr: Box::new(Expr::Subscript {
-                expr: Box::new(Expr::Subscript {
-                    expr: Box::new(Expr::Identifier(Ident::new("bar"))),
-                    subscript: Box::new(Subscript::Index {
-                        index: num[0].clone()
-                    })
+        &Expr::CompoundFieldAccess {
+            root: Box::new(Expr::Identifier(Ident::new("bar"))),
+            access_chain: vec![
+                AccessExpr::Subscript(Subscript::Index {
+                    index: num[0].clone()
                 }),
-                subscript: Box::new(Subscript::Index {
+                AccessExpr::Subscript(Subscript::Index {
                     index: Expr::Identifier(Ident {
                         value: "baz".to_string(),
                         quote_style: Some('"'),
                         span: Span::empty(),
                     })
-                })
-            }),
-            subscript: Box::new(Subscript::Index {
-                index: Expr::Identifier(Ident {
-                    value: "fooz".to_string(),
-                    quote_style: Some('"'),
-                    span: Span::empty(),
-                })
-            })
+                }),
+                AccessExpr::Subscript(Subscript::Index {
+                    index: Expr::Identifier(Ident {
+                        value: "fooz".to_string(),
+                        quote_style: Some('"'),
+                        span: Span::empty(),
+                    })
+                }),
+            ],
         },
         expr_from_projection(only(&select.projection)),
     );
@@ -2154,33 +2246,33 @@ fn parse_array_index_expr() {
     let sql = "SELECT (CAST(ARRAY[ARRAY[2, 3]] AS INT[][]))[1][2]";
     let select = pg_and_generic().verified_only_select(sql);
     assert_eq!(
-        &Expr::Subscript {
-            expr: Box::new(Expr::Subscript {
-                expr: Box::new(Expr::Nested(Box::new(Expr::Cast {
-                    kind: CastKind::Cast,
-                    expr: Box::new(Expr::Array(Array {
-                        elem: vec![Expr::Array(Array {
-                            elem: vec![num[2].clone(), num[3].clone(),],
-                            named: true,
-                        })],
+        &Expr::CompoundFieldAccess {
+            root: Box::new(Expr::Nested(Box::new(Expr::Cast {
+                kind: CastKind::Cast,
+                expr: Box::new(Expr::Array(Array {
+                    elem: vec![Expr::Array(Array {
+                        elem: vec![num[2].clone(), num[3].clone(),],
                         named: true,
-                    })),
-                    data_type: DataType::Array(ArrayElemTypeDef::SquareBracket(
-                        Box::new(DataType::Array(ArrayElemTypeDef::SquareBracket(
-                            Box::new(DataType::Int(None)),
-                            None
-                        ))),
+                    })],
+                    named: true,
+                })),
+                data_type: DataType::Array(ArrayElemTypeDef::SquareBracket(
+                    Box::new(DataType::Array(ArrayElemTypeDef::SquareBracket(
+                        Box::new(DataType::Int(None)),
                         None
-                    )),
-                    format: None,
-                }))),
-                subscript: Box::new(Subscript::Index {
+                    ))),
+                    None
+                )),
+                format: None,
+            }))),
+            access_chain: vec![
+                AccessExpr::Subscript(Subscript::Index {
                     index: num[1].clone()
                 }),
-            }),
-            subscript: Box::new(Subscript::Index {
-                index: num[2].clone()
-            }),
+                AccessExpr::Subscript(Subscript::Index {
+                    index: num[2].clone()
+                }),
+            ],
         },
         expr_from_projection(only(&select.projection)),
     );
@@ -2269,8 +2361,12 @@ fn parse_array_subscript() {
         ),
     ];
     for (sql, expect) in tests {
-        let Expr::Subscript { subscript, .. } = pg_and_generic().verified_expr(sql) else {
+        let Expr::CompoundFieldAccess { access_chain, .. } = pg_and_generic().verified_expr(sql)
+        else {
             panic!("expected subscript expr");
+        };
+        let Some(AccessExpr::Subscript(subscript)) = access_chain.last() else {
+            panic!("expected subscript");
         };
         assert_eq!(expect, *subscript);
     }
@@ -2282,25 +2378,25 @@ fn parse_array_subscript() {
 fn parse_array_multi_subscript() {
     let expr = pg_and_generic().verified_expr("make_array(1, 2, 3)[1:2][2]");
     assert_eq!(
-        Expr::Subscript {
-            expr: Box::new(Expr::Subscript {
-                expr: Box::new(call(
-                    "make_array",
-                    vec![
-                        Expr::Value(number("1")),
-                        Expr::Value(number("2")),
-                        Expr::Value(number("3"))
-                    ]
-                )),
-                subscript: Box::new(Subscript::Slice {
+        Expr::CompoundFieldAccess {
+            root: Box::new(call(
+                "make_array",
+                vec![
+                    Expr::Value(number("1")),
+                    Expr::Value(number("2")),
+                    Expr::Value(number("3"))
+                ]
+            )),
+            access_chain: vec![
+                AccessExpr::Subscript(Subscript::Slice {
                     lower_bound: Some(Expr::Value(number("1"))),
                     upper_bound: Some(Expr::Value(number("2"))),
                     stride: None,
                 }),
-            }),
-            subscript: Box::new(Subscript::Index {
-                index: Expr::Value(number("2")),
-            }),
+                AccessExpr::Subscript(Subscript::Index {
+                    index: Expr::Value(number("2")),
+                }),
+            ],
         },
         expr,
     );
@@ -3709,7 +3805,7 @@ fn parse_drop_function() {
                 }]),
                 args: None
             }],
-            option: None
+            drop_behavior: None
         }
     );
 
@@ -3734,7 +3830,7 @@ fn parse_drop_function() {
                     }
                 ]),
             }],
-            option: None
+            drop_behavior: None
         }
     );
 
@@ -3783,7 +3879,7 @@ fn parse_drop_function() {
                     ]),
                 }
             ],
-            option: None
+            drop_behavior: None
         }
     );
 }
@@ -3803,7 +3899,7 @@ fn parse_drop_procedure() {
                 }]),
                 args: None
             }],
-            option: None
+            drop_behavior: None
         }
     );
 
@@ -3828,7 +3924,7 @@ fn parse_drop_procedure() {
                     }
                 ]),
             }],
-            option: None
+            drop_behavior: None
         }
     );
 
@@ -3877,7 +3973,7 @@ fn parse_drop_procedure() {
                     ]),
                 }
             ],
-            option: None
+            drop_behavior: None
         }
     );
 
@@ -4075,7 +4171,7 @@ fn parse_truncate_with_options() {
             table: true,
             only: true,
             identity: Some(TruncateIdentityOption::Restart),
-            cascade: Some(TruncateCascadeOption::Cascade),
+            cascade: Some(CascadeOption::Cascade),
             on_cluster: None,
         },
         truncate
@@ -4107,7 +4203,7 @@ fn parse_truncate_with_table_list() {
             table: true,
             only: false,
             identity: Some(TruncateIdentityOption::Restart),
-            cascade: Some(TruncateCascadeOption::Cascade),
+            cascade: Some(CascadeOption::Cascade),
             on_cluster: None,
         },
         truncate
@@ -4285,11 +4381,11 @@ fn test_simple_postgres_insert_with_alias() {
             or: None,
             ignore: false,
             into: true,
-            table_name: ObjectName(vec![Ident {
+            table: TableObject::TableName(ObjectName(vec![Ident {
                 value: "test_tables".to_string(),
                 quote_style: None,
                 span: Span::empty(),
-            }]),
+            }])),
             table_alias: Some(Ident {
                 value: "test_table".to_string(),
                 quote_style: None,
@@ -4327,14 +4423,17 @@ fn test_simple_postgres_insert_with_alias() {
                 settings: None,
                 format_clause: None,
             })),
+            assignments: vec![],
             partitioned: None,
             after_columns: vec![],
-            table: false,
+            has_table_keyword: false,
             on: None,
             returning: None,
             replace_into: false,
             priority: None,
-            insert_alias: None
+            insert_alias: None,
+            settings: None,
+            format_clause: None,
         })
     )
 }
@@ -4352,11 +4451,11 @@ fn test_simple_postgres_insert_with_alias() {
             or: None,
             ignore: false,
             into: true,
-            table_name: ObjectName(vec![Ident {
+            table: TableObject::TableName(ObjectName(vec![Ident {
                 value: "test_tables".to_string(),
                 quote_style: None,
                 span: Span::empty(),
-            }]),
+            }])),
             table_alias: Some(Ident {
                 value: "test_table".to_string(),
                 quote_style: None,
@@ -4397,14 +4496,17 @@ fn test_simple_postgres_insert_with_alias() {
                 settings: None,
                 format_clause: None,
             })),
+            assignments: vec![],
             partitioned: None,
             after_columns: vec![],
-            table: false,
+            has_table_keyword: false,
             on: None,
             returning: None,
             replace_into: false,
             priority: None,
-            insert_alias: None
+            insert_alias: None,
+            settings: None,
+            format_clause: None,
         })
     )
 }
@@ -4421,11 +4523,11 @@ fn test_simple_insert_with_quoted_alias() {
             or: None,
             ignore: false,
             into: true,
-            table_name: ObjectName(vec![Ident {
+            table: TableObject::TableName(ObjectName(vec![Ident {
                 value: "test_tables".to_string(),
                 quote_style: None,
                 span: Span::empty(),
-            }]),
+            }])),
             table_alias: Some(Ident {
                 value: "Test_Table".to_string(),
                 quote_style: Some('"'),
@@ -4463,14 +4565,17 @@ fn test_simple_insert_with_quoted_alias() {
                 settings: None,
                 format_clause: None,
             })),
+            assignments: vec![],
             partitioned: None,
             after_columns: vec![],
-            table: false,
+            has_table_keyword: false,
             on: None,
             returning: None,
             replace_into: false,
             priority: None,
             insert_alias: None,
+            settings: None,
+            format_clause: None,
         })
     )
 }

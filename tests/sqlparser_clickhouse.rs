@@ -25,7 +25,7 @@ use helpers::attached_token::AttachedToken;
 use sqlparser::tokenizer::Span;
 use test_utils::*;
 
-use sqlparser::ast::Expr::{BinaryOp, Identifier, MapAccess};
+use sqlparser::ast::Expr::{BinaryOp, Identifier};
 use sqlparser::ast::SelectItem::UnnamedExpr;
 use sqlparser::ast::TableFactor::Table;
 use sqlparser::ast::Value::Number;
@@ -44,22 +44,21 @@ fn parse_map_access_expr() {
             select_token: AttachedToken::empty(),
             top: None,
             top_before_distinct: false,
-            projection: vec![UnnamedExpr(MapAccess {
-                column: Box::new(Identifier(Ident {
+            projection: vec![UnnamedExpr(Expr::CompoundFieldAccess {
+                root: Box::new(Identifier(Ident {
                     value: "string_values".to_string(),
                     quote_style: None,
                     span: Span::empty(),
                 })),
-                keys: vec![MapAccessKey {
-                    key: call(
+                access_chain: vec![AccessExpr::Subscript(Subscript::Index {
+                    index: call(
                         "indexOf",
                         [
                             Expr::Identifier(Ident::new("string_names")),
                             Expr::Value(Value::SingleQuotedString("endpoint".to_string()))
                         ]
                     ),
-                    syntax: MapAccessSyntax::Bracket
-                }],
+                })],
             })],
             into: None,
             from: vec![TableWithJoins {
@@ -76,18 +75,17 @@ fn parse_map_access_expr() {
                 }),
                 op: BinaryOperator::And,
                 right: Box::new(BinaryOp {
-                    left: Box::new(MapAccess {
-                        column: Box::new(Identifier(Ident::new("string_value"))),
-                        keys: vec![MapAccessKey {
-                            key: call(
+                    left: Box::new(Expr::CompoundFieldAccess {
+                        root: Box::new(Identifier(Ident::new("string_value"))),
+                        access_chain: vec![AccessExpr::Subscript(Subscript::Index {
+                            index: call(
                                 "indexOf",
                                 [
                                     Expr::Identifier(Ident::new("string_name")),
                                     Expr::Value(Value::SingleQuotedString("app".to_string()))
                                 ]
                             ),
-                            syntax: MapAccessSyntax::Bracket
-                        }],
+                        })],
                     }),
                     op: BinaryOperator::NotEq,
                     right: Box::new(Expr::Value(Value::SingleQuotedString("foo".to_string()))),
@@ -222,6 +220,12 @@ fn parse_create_table() {
     clickhouse().verified_stmt(
         r#"CREATE TABLE "x" ("a" "int") ENGINE=MergeTree ORDER BY "x" AS SELECT * FROM "t" WHERE true"#,
     );
+}
+
+#[test]
+fn parse_insert_into_function() {
+    clickhouse().verified_stmt(r#"INSERT INTO TABLE FUNCTION remote('localhost', default.simple_table) VALUES (100, 'inserted via remote()')"#);
+    clickhouse().verified_stmt(r#"INSERT INTO FUNCTION remote('localhost', default.simple_table) VALUES (100, 'inserted via remote()')"#);
 }
 
 #[test]
@@ -1405,6 +1409,26 @@ fn test_query_with_format_clause() {
         clickhouse_and_generic()
             .parse_sql_statements(sql)
             .expect_err("Expected: FORMAT {identifier}, found: ");
+    }
+}
+
+#[test]
+fn test_insert_query_with_format_clause() {
+    let cases = [
+        r#"INSERT INTO tbl FORMAT JSONEachRow {"id": 1, "value": "foo"}, {"id": 2, "value": "bar"}"#,
+        r#"INSERT INTO tbl FORMAT JSONEachRow ["first", "second", "third"]"#,
+        r#"INSERT INTO tbl FORMAT JSONEachRow [{"first": 1}]"#,
+        r#"INSERT INTO tbl (foo) FORMAT JSONAsObject {"foo": {"bar": {"x": "y"}, "baz": 1}}"#,
+        r#"INSERT INTO tbl (foo, bar) FORMAT JSON {"foo": 1, "bar": 2}"#,
+        r#"INSERT INTO tbl FORMAT CSV col1, col2, col3"#,
+        r#"INSERT INTO tbl FORMAT LineAsString "I love apple", "I love banana", "I love orange""#,
+        r#"INSERT INTO tbl (foo) SETTINGS input_format_json_read_bools_as_numbers = true FORMAT JSONEachRow {"id": 1, "value": "foo"}"#,
+        r#"INSERT INTO tbl SETTINGS format_template_resultset = '/some/path/resultset.format', format_template_row = '/some/path/row.format' FORMAT Template"#,
+        r#"INSERT INTO tbl SETTINGS input_format_json_read_bools_as_numbers = true FORMAT JSONEachRow {"id": 1, "value": "foo"}"#,
+    ];
+
+    for sql in &cases {
+        clickhouse().verified_stmt(sql);
     }
 }
 
